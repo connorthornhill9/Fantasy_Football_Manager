@@ -3,8 +3,8 @@
 Sleeper's documented API is read-only. Roster changes go through the same GraphQL
 endpoint the sleeper.com web app uses. The mutations below were confirmed against the
 live schema via GraphQL introspection (September 2026); they are unofficial and may
-change without notice. The token is the `authorization` header value the web app
-sends, captured once from the browser's DevTools.
+change without notice. Requests are authenticated with the account owner's own Sleeper
+session token, supplied through SLEEPER_TOKEN.
 """
 from __future__ import annotations
 

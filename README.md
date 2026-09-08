@@ -28,8 +28,8 @@ Nothing touches your roster without a click from you.
    Without a Sleeper token, or with `FFM_DRY_RUN=true`, approvals are logged instead of sent.
 
 Sleeper's public API is read-only, so moves use the same GraphQL calls the Sleeper website
-makes, authenticated with a token captured from your browser (see below). That API is
-unofficial and could change; if it does, the bot will report the error rather than guess.
+makes, authenticated as the account owner. That API is unofficial and could change; if it
+does, the bot reports the error rather than guessing.
 
 ## Setup
 
@@ -73,23 +73,15 @@ Proposals it records are stored as *pending*. You can execute or reject them fro
 terminal too (`python -m ffm pending`, `python -m ffm execute <id>`), which is handy for testing
 before wiring up Discord.
 
-### 3. Capturing your Sleeper token (write side)
+### 3. Sleeper session (write side)
 
-Only needed to execute moves. The token gives full control of your Sleeper account, so treat
-it like a password: it lives only in `.env` (git-ignored) and is never logged.
+Executing moves requires the account's own Sleeper session token in `SLEEPER_TOKEN`. It gives
+full control of the Sleeper account, so it is treated like a password: it lives only in `.env`
+(git-ignored) and is never logged. `python -m ffm whoami` shows which user it belongs to and
+when it expires; `/status` in Discord shows the expiry too.
 
-1. Open <https://sleeper.com> in Chrome or Edge and log in.
-2. Press F12 to open DevTools, choose the **Network** tab, and tick **Fetch/XHR**.
-3. Do anything in the app (open your league). Click any request named `graphql`.
-4. Under **Request Headers** copy the value of `authorization` (a long string starting with
-   `eyJ`).
-5. Paste it into `.env` as `SLEEPER_TOKEN=...`.
-
-`python -m ffm whoami` shows which Sleeper user the token belongs to and when it expires.
-When it expires, repeat the steps above. `/status` in Discord shows the expiry too.
-
-To test approvals without making real moves set `FFM_DRY_RUN=true`; approved proposals are
-logged instead of sent.
+Without it, or with `FFM_DRY_RUN=true`, approvals are logged instead of sent, which is the
+safe way to evaluate the recommendations first.
 
 ### 4. Discord bot
 
@@ -230,8 +222,8 @@ The database and player cache live in `./data` on the host, so `docker compose d
 runs `python -m ffm run` from the project folder at logon, and disable sleep in power settings.
 Less reliable than a server, and useless while the PC is off.
 
-Either way, remember the Sleeper token expires and must be re-captured from a browser where you
-are logged in to sleeper.com. `/status` shows the expiry date, and it works from any device.
+Either way, remember the Sleeper session token expires and has to be renewed. `/status` shows
+the expiry date, and it works from any device.
 
 ## Running the tests
 
@@ -247,9 +239,13 @@ See `CLAUDE.md` for a file-by-file map.
 
 ## Credits
 
-The idea of driving Sleeper through its GraphQL endpoint with a browser token comes from
+The idea of driving Sleeper through its GraphQL endpoint comes from
 [cameron-eth/sleeper-sdk](https://github.com/cameron-eth/sleeper-sdk); the mutation names in
-this project were confirmed against Sleeper's live schema by introspection, since the older
-names had been retired. Player data, projections
-and league data come from [Sleeper](https://docs.sleeper.com/) and are used for personal,
-non-commercial purposes.
+this project were confirmed against Sleeper's live schema, since the older names had been
+retired. Player data, projections and league data come from
+[Sleeper](https://docs.sleeper.com/) and are used for personal, non-commercial purposes.
+
+## License
+
+This is a personal project shared for reference. All rights reserved; it is not licensed for
+reuse or redistribution.
