@@ -62,6 +62,7 @@ def build_app(config: Config) -> App:
             log.warning("SLEEPER_TOKEN expires in %.1f days", remaining / 86400)
     else:
         log.warning("SLEEPER_TOKEN not set: proposals can be reviewed but not executed (dry-run mode)")
+    advisor.auth = auth
     executor = Executor(auth, dry_run=config.dry_run, public=public)
     if config.dry_run:
         log.info("FFM_DRY_RUN is on: approved proposals are logged, not sent to Sleeper")

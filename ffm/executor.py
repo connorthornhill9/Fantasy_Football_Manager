@@ -32,7 +32,7 @@ class ExecutionResult:
 
 class Executor:
     def __init__(
-        self, auth: SleeperAuth | None, dry_run: bool = False, public: SleeperPublic | None = None, verify_delay: float = 2.0
+        self, auth: SleeperAuth | None, dry_run: bool = False, public: SleeperPublic | None = None, verify_delay: float = 4.0
     ):
         self.auth = auth
         self.dry_run = dry_run or auth is None
@@ -100,8 +100,8 @@ class Executor:
         problem: str | None = "roster could not be read"
         for attempt in range(attempts):
             try:
-                rosters = await self.public.get_rosters(t.league_id)
-            except SleeperAPIError as exc:
+                rosters = await self._fresh_rosters(t.league_id)
+            except (SleeperAPIError, SleeperAuthError) as exc:
                 problem = f"roster could not be read ({exc})"
             else:
                 mine = next((r for r in rosters if int(r.get("roster_id", -1)) == t.roster_id), None)
@@ -111,6 +111,14 @@ class Executor:
             if attempt < attempts - 1 and self.verify_delay > 0:
                 await asyncio.sleep(self.verify_delay * (attempt + 1))
         return problem
+
+    async def _fresh_rosters(self, league_id: str) -> list[dict]:
+        """Authenticated GraphQL read when available (not cached); otherwise the public API."""
+        getter = getattr(self.auth, "get_league_rosters", None)
+        if getter is not None:
+            return await getter(league_id)
+        assert self.public is not None
+        return await self.public.get_rosters(league_id)
 
     @staticmethod
     def _check_roster(p: Proposal, roster: dict) -> str | None:
@@ -156,9 +164,9 @@ class Executor:
         return p.kind
 
     async def _my_roster(self, t: ExecTarget) -> dict:
-        if self.public is None:
+        if self.public is None and getattr(self.auth, "get_league_rosters", None) is None:
             raise ValueError("a Sleeper read client is required for IR/taxi moves")
-        rosters = await self.public.get_rosters(t.league_id)
+        rosters = await self._fresh_rosters(t.league_id)
         mine = next((r for r in rosters if int(r.get("roster_id", -1)) == t.roster_id), None)
         if mine is None:
             raise ValueError("my roster was not found")

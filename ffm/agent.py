@@ -98,13 +98,14 @@ class Advisor:
         self.public = public
         self.store = store
         self.client = anthropic.AsyncAnthropic()
+        self.auth = None  # set by build_app when a Sleeper token is configured
         self._league_id: str | None = config.sleeper_league_id
         self._roster_id: int | None = None
 
     # ------------------------------------------------------------------ public API
 
     async def build_context(self) -> LeagueContext:
-        ctx = await LeagueContext.build(self.config, self.public, self.store)
+        ctx = await LeagueContext.build(self.config, self.public, self.store, auth=self.auth)
         self._league_id, self._roster_id = ctx.league_id, ctx.my_roster_id
         return ctx
 

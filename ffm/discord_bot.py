@@ -71,7 +71,7 @@ def proposal_embed(rec: ProposalRecord, players: PlayerDB, note: str | None = No
     if note:
         status_line += f"\n{note}"
     embed.add_field(name="Status", value=status_line[:1024], inline=False)
-    embed.set_footer(text=f"Run {rec.run_id} · proposed {rec.created_at[:16].replace('T', ' ')} UTC")
+    embed.set_footer(text=f"Proposal #{rec.id} · {rec.created_at[:16].replace('T', ' ')} UTC")
     return embed
 
 

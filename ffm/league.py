@@ -12,6 +12,7 @@ from .news import ESPNNews, Game, InjuryNote, NewsItem, ProjectionRow, match_inj
 from .players import EMPTY_SLOT, NON_STARTING_SLOTS, PlayerDB, eligible_positions, slot_allows, slot_positions
 from .proposals import Proposal
 from .scoring import describe_scoring, full_scoring_markdown, score_stats
+from .sleeper.auth import SleeperAuth
 from .sleeper.public import SleeperPublic
 from .store import Store
 
@@ -95,7 +96,9 @@ class LeagueContext:
     # ------------------------------------------------------------------ construction
 
     @classmethod
-    async def build(cls, config: Config, public: SleeperPublic, store: Store | None = None) -> "LeagueContext":
+    async def build(
+        cls, config: Config, public: SleeperPublic, store: Store | None = None, auth: "SleeperAuth | None" = None
+    ) -> "LeagueContext":
         config.require_sleeper()
         user = await public.get_user(config.sleeper_username)
         if not user:
@@ -151,6 +154,9 @@ class LeagueContext:
         finally:
             if espn:
                 await espn.aclose()
+
+        if auth is not None:
+            rosters = await cls._overlay_fresh_rosters(auth, league_id, rosters)
 
         my_roster = next(
             (r for r in rosters if r.get("owner_id") == user["user_id"] or user["user_id"] in (r.get("co_owners") or [])),
@@ -235,6 +241,26 @@ class LeagueContext:
                 label = "this season" if this_season else "last season"
                 return ", ".join(f"{when} ({n} claims)" for when, n in top) + f" [{label}, {self.config.timezone or 'UTC'}]"
         return None
+
+    @staticmethod
+    async def _overlay_fresh_rosters(auth: "SleeperAuth", league_id: str, rosters: list[dict]) -> list[dict]:
+        """The public REST rosters can lag a minute or more after a move; overlay the live GraphQL state."""
+        try:
+            fresh = await auth.get_league_rosters(league_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not read live rosters, using the public API: %s", exc)
+            return rosters
+        by_id = {int(r["roster_id"]): r for r in fresh if r.get("roster_id") is not None}
+        merged = []
+        for r in rosters:
+            live = by_id.get(int(r.get("roster_id", -1)))
+            if live:
+                r = dict(r)
+                for key in ("players", "starters", "reserve", "taxi"):
+                    if key in live:
+                        r[key] = live[key]
+            merged.append(r)
+        return merged
 
     @staticmethod
     def _used_positions(league: dict) -> set[str]:

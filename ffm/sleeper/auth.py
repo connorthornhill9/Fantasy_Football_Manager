@@ -282,6 +282,16 @@ class SleeperAuth:
         data = await self.gql("cancel_trade", query, {"league_id": league_id, "transaction_id": transaction_id, "leg": leg})
         return data.get("cancel_trade") or {}
 
+    async def get_league_rosters(self, league_id: str) -> list[dict]:
+        """Fresh roster state straight from Sleeper (the public REST API can lag by a minute or more)."""
+        query = f"""
+        query league_rosters($league_id: Snowflake!) {{
+          league_rosters(league_id: $league_id) {{ {ROSTER_FIELDS} owner_id co_owners settings metadata }}
+        }}
+        """
+        data = await self.gql("league_rosters", query, {"league_id": league_id})
+        return data.get("league_rosters") or []
+
     async def get_pending_trades(self, league_id: str, limit: int = 100) -> list[dict]:
         """All trades in 'proposed' status (the public API only exposes completed ones)."""
         return await self.get_transactions(league_id, types=["trade"], statuses=["proposed"], limit=limit)
