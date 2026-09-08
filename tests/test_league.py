@@ -148,6 +148,16 @@ def test_locks_block_drops_and_trades_but_not_lineups():
     assert "Tight End [6]" in ctx.rules_markdown()
 
 
+def test_pending_claims_are_respected():
+    ctx = make_ctx()
+    ctx.pending_claims = [{"roster_ids": [1], "adds": {"8": 1}, "drops": {"11": 1}, "settings": {}}]
+    assert ctx.claimed_adds() == {"8"} and ctx.claimed_drops() == {"11"}
+    assert [l.pid for l in ctx.free_agents("WR")] == []  # 8 hidden while the claim is pending
+    assert any("already in one of my pending" in e for e in errors(ctx, kind="waiver_claim", adds=["8"], faab_bid=1))
+    assert any("already the drop" in e for e in errors(ctx, kind="add_drop", adds=["13"], drops=["11"]))
+    assert "Free Agent (WR, BUF), drop Bench Wide" in ctx.rules_markdown()
+
+
 def test_waiver_validation():
     ctx = make_ctx()
     assert any("faab_bid is required" in e for e in errors(ctx, kind="waiver_claim", adds=["8"], drops=["11"]))

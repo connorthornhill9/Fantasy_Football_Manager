@@ -99,6 +99,7 @@ class LeagueContext:
     games: dict[str, Game] = field(default_factory=dict)  # team abbreviation -> this week's game
     espn_proj: dict[str, float] = field(default_factory=dict)  # pid -> ESPN projection under league scoring
     locked: dict[str, str] = field(default_factory=dict)
+    pending_claims: list[dict] = field(default_factory=list)  # my waiver claims awaiting the next run
     waiver_history: str | None = None  # e.g. "Wednesday 12:00 (67 claims), Thursday 03:00 (26 claims)"
     built_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -183,6 +184,13 @@ class LeagueContext:
             if leg and leg.get("starters"):
                 my_roster = dict(my_roster, starters=[str(s) for s in leg["starters"]])
                 rosters = [my_roster if r is not my_roster and int(r["roster_id"]) == int(my_roster["roster_id"]) else r for r in rosters]
+        pending_claims: list[dict] = []
+        if auth is not None:
+            try:
+                claims = await auth.get_transactions(league_id, types=["waiver"], statuses=["pending"], limit=100)
+                pending_claims = [c for c in claims if int(my_roster["roster_id"]) in (c.get("roster_ids") or [])]
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not read pending waiver claims: %s", exc)
 
         ctx = cls(
             config=config,
@@ -198,6 +206,7 @@ class LeagueContext:
             matchups=matchups,
             transactions=[t for txs in tx_raw for t in txs],
             locked=store.locks() if store else {},
+            pending_claims=pending_claims,
         )
         ctx._ingest_projections(projections)
         ctx._ingest_season(season_rows)
@@ -470,6 +479,25 @@ class LeagueContext:
     def is_locked(self, player_id: str) -> bool:
         return str(player_id) in self.locked
 
+    def claimed_adds(self) -> set[str]:
+        """Players I already have a pending waiver claim on."""
+        return {str(p) for c in self.pending_claims for p in (c.get("adds") or {})}
+
+    def claimed_drops(self) -> set[str]:
+        """Players already committed as the drop side of one of my pending claims."""
+        return {str(p) for c in self.pending_claims for p in (c.get("drops") or {})}
+
+    def pending_claims_text(self) -> str:
+        if not self.pending_claims:
+            return "none"
+        parts = []
+        for c in self.pending_claims:
+            adds = ", ".join(self.players.label(p) for p in (c.get("adds") or {})) or "-"
+            drops = ", ".join(self.players.label(p) for p in (c.get("drops") or {})) or "nobody"
+            bid = (c.get("settings") or {}).get("waiver_bid")
+            parts.append(f"add {adds}, drop {drops}" + (f", bid ${bid}" if bid is not None else ""))
+        return "; ".join(parts) + " (these process at the next waiver run and may fail to a higher priority; do not re-claim them or drop their drop-side players again)"
+
     def proj_pts(self, player_id: str) -> float | None:
         entry = self.projections.get(str(player_id))
         return entry["pts"] if entry else None
@@ -527,7 +555,10 @@ class LeagueContext:
     def free_agents(self, position: str | None = None, limit: int = 15, with_delta: bool = False) -> list[PlayerLine]:
         out = []
         wanted = position.upper() if position else None
+        claimed = self.claimed_adds()
         for pid in self.free_agent_ids:
+            if pid in claimed:
+                continue  # already have a claim in for him
             if wanted:
                 p = self.players.get(pid) or {}
                 if wanted not in eligible_positions(p):
@@ -777,6 +808,13 @@ class LeagueContext:
         for pid in list(p.drops) + list(p.i_give):
             if self.is_locked(pid) and p.kind not in ("ir", "taxi", "activate_ir"):
                 errors.append(f"{self.players.name(pid)} is LOCKED by the manager and cannot be dropped or traded away")
+        if p.kind in ("add", "add_drop", "waiver_claim", "drop"):
+            for pid in p.adds:
+                if pid in self.claimed_adds():
+                    errors.append(f"{self.players.name(pid)} is already in one of my pending waiver claims")
+            for pid in p.drops:
+                if pid in self.claimed_drops():
+                    errors.append(f"{self.players.name(pid)} is already the drop in a pending waiver claim; pick a different drop")
 
         if p.kind in ("add", "add_drop", "waiver_claim"):
             if not p.adds:
@@ -1076,6 +1114,7 @@ class LeagueContext:
             f"Trade deadline: {'none' if deadline >= 99 else f'week {deadline}'}; playoffs start week {s.get('playoff_week_start', '?')}",
             f"My team: {self.owner_name(self.my_roster)} (roster id {self.my_roster_id}), record {record}, points for {float(my.get('fpts', 0)):.1f}",
             f"LOCKED players (the manager forbids dropping or trading these; you may still start/bench them and may say what you would do if they were unlocked): {locked}",
+            f"My pending waiver claims: {self.pending_claims_text()}",
         ]
         return "\n".join(lines)
 
