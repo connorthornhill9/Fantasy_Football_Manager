@@ -20,10 +20,10 @@ def _print_result(app: App, result) -> None:
         print("\nNo proposals recorded.")
         return
     players = result.context.players
-    print(f"\n{len(result.proposals)} proposal(s) stored as pending:")
+    print(f"\n{len(result.proposals)} proposal(s) recorded:")
     for rec in result.proposals:
         p = rec.proposal
-        print(f"\n  #{rec.id}  [{p.kind}, {p.confidence}]  {p.title(players.label)}")
+        print(f"\n  #{rec.id}  [{p.kind}, {p.confidence}, {rec.status}]  {p.title(players.label)}")
         if p.expected_gain:
             print(f"      gain: {p.expected_gain}")
         print(f"      {p.rationale}")
