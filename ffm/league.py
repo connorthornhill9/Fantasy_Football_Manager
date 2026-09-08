@@ -100,6 +100,7 @@ class LeagueContext:
     espn_proj: dict[str, float] = field(default_factory=dict)  # pid -> ESPN projection under league scoring
     locked: dict[str, str] = field(default_factory=dict)
     pending_claims: list[dict] = field(default_factory=list)  # my waiver claims awaiting the next run
+    recent_claims: list[dict] = field(default_factory=list)  # my claims resolved in the last few days
     waiver_history: str | None = None  # e.g. "Wednesday 12:00 (67 claims), Thursday 03:00 (26 claims)"
     built_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -185,12 +186,19 @@ class LeagueContext:
                 my_roster = dict(my_roster, starters=[str(s) for s in leg["starters"]])
                 rosters = [my_roster if r is not my_roster and int(r["roster_id"]) == int(my_roster["roster_id"]) else r for r in rosters]
         pending_claims: list[dict] = []
+        recent_claims: list[dict] = []
         if auth is not None:
             try:
-                claims = await auth.get_transactions(league_id, types=["waiver"], statuses=["pending"], limit=100)
-                pending_claims = [c for c in claims if int(my_roster["roster_id"]) in (c.get("roster_ids") or [])]
+                claims = await auth.get_transactions(league_id, types=["waiver"], limit=200)
+                mine = [c for c in claims if int(my_roster["roster_id"]) in (c.get("roster_ids") or [])]
+                pending_claims = [c for c in mine if c.get("status") == "pending"]
+                cutoff_ms = (datetime.now(timezone.utc).timestamp() - 4 * 86400) * 1000
+                recent_claims = [
+                    c for c in mine
+                    if c.get("status") != "pending" and int(c.get("status_updated") or c.get("created") or 0) >= cutoff_ms
+                ]
             except Exception as exc:  # noqa: BLE001
-                log.warning("Could not read pending waiver claims: %s", exc)
+                log.warning("Could not read waiver claims: %s", exc)
 
         ctx = cls(
             config=config,
@@ -207,6 +215,7 @@ class LeagueContext:
             transactions=[t for txs in tx_raw for t in txs],
             locked=store.locks() if store else {},
             pending_claims=pending_claims,
+            recent_claims=recent_claims,
         )
         ctx._ingest_projections(projections)
         ctx._ingest_season(season_rows)
@@ -497,6 +506,18 @@ class LeagueContext:
             bid = (c.get("settings") or {}).get("waiver_bid")
             parts.append(f"add {adds}, drop {drops}" + (f", bid ${bid}" if bid is not None else ""))
         return "; ".join(parts) + " (these process at the next waiver run and may fail to a higher priority; do not re-claim them or drop their drop-side players again)"
+
+    def recent_claims_text(self) -> str:
+        if not self.recent_claims:
+            return "none in the last few days"
+        parts = []
+        for c in sorted(self.recent_claims, key=lambda x: -(x.get("status_updated") or x.get("created") or 0)):
+            adds = ", ".join(self.players.label(p) for p in (c.get("adds") or {})) or "-"
+            drops = ", ".join(self.players.label(p) for p in (c.get("drops") or {})) or "nobody"
+            note = (c.get("metadata") or {}).get("notes")
+            status = {"complete": "WON", "failed": "LOST"}.get(str(c.get("status")), str(c.get("status")))
+            parts.append(f"{status}: add {adds}, drop {drops}" + (f" ({note})" if note else ""))
+        return "; ".join(parts)
 
     def proj_pts(self, player_id: str) -> float | None:
         entry = self.projections.get(str(player_id))
@@ -1089,13 +1110,11 @@ class LeagueContext:
         if s.get("daily_waivers"):
             hour = s.get("daily_waivers_hour")
             parts.append(f"waivers run on league-selected days at {hour}:00 Pacific" if hour is not None else "waivers run daily on league-selected days")
-        parts.append(f"dropped players clear waivers after {s.get('waiver_clear_days', '?')} day(s)")
+        parts.append(f"dropped players stay on waivers for {s.get('waiver_clear_days', '?')} day(s)")
         if self.waiver_history:
             parts.append(f"claims actually processed at: {self.waiver_history}")
-        parts.append(
-            "in-season a player goes on waivers once his game kicks off and stays there until the next waiver run, "
-            "so early in the week most useful players need a waiver_claim; direct adds work once waivers have run"
-        )
+        if self.config.league_notes:
+            parts.append(f"manager's notes on this league's rules: {self.config.league_notes}")
         return "; ".join(parts) + "."
 
     def rules_markdown(self) -> str:
@@ -1115,6 +1134,7 @@ class LeagueContext:
             f"My team: {self.owner_name(self.my_roster)} (roster id {self.my_roster_id}), record {record}, points for {float(my.get('fpts', 0)):.1f}",
             f"LOCKED players (the manager forbids dropping or trading these; you may still start/bench them and may say what you would do if they were unlocked): {locked}",
             f"My pending waiver claims: {self.pending_claims_text()}",
+            f"My recent waiver claim results: {self.recent_claims_text()}",
         ]
         return "\n".join(lines)
 

@@ -15,9 +15,10 @@ log = logging.getLogger(__name__)
 
 # (job id, advisor trigger, display name, Config attribute holding the cron expression)
 JOBS = (
-    ("weekly_waivers", "weekly_waivers", "Waiver-day review", "analysis_cron"),
-    ("lineup", "lineup", "Pre-game lineup check", "lineup_cron"),
-    ("late_news", "lineup", "Late-week injury check", "news_cron"),
+    ("fa_sweep", "fa_sweep", "Free-agent sweep", "cron_fa_sweep"),
+    ("market", "weekly_waivers", "Market review", "cron_market"),
+    ("post_waivers", "post_waivers", "Post-waiver sweep", "cron_post_waivers"),
+    ("late_week", "late_week", "Injury replacements + lineup", "cron_late_week"),
 )
 
 

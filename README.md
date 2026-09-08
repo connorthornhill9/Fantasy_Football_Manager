@@ -112,6 +112,7 @@ Slash commands in Discord:
 | Command | What it does |
 |---|---|
 | `/analyze [focus]` | Market review: adds, drops, claims, IR and stashes, each tagged this week / next 3-4 weeks / season. Never proposes a lineup. Optional focus such as `find me a TE`. |
+| `/sweep` | Quick free-agent sweep: direct adds worth making today, no claims, no lineup. Cheap. |
 | `/lineup` | This week's lineup only: the computed optimum adjusted for injuries, practice notes, suspensions, kickoff times, weather and trends. Never proposes adds. |
 | `/matchup` | Optimal lineup by projection plus a win-probability estimate. Instant, no AI call. |
 | `/trades` | Realistic trade ideas based on every team's positional strengths. Advice only. |
@@ -122,13 +123,22 @@ Slash commands in Discord:
 | `/lock player`, `/unlock player`, `/locks` | Protect players (see below). |
 | `/status` | Model, token expiry, next scheduled runs. |
 
-Scheduled runs (configurable in `.env`, cron syntax, 0 = Sunday; set to `off` to disable):
+Scheduled runs (configurable in `.env`, cron syntax, 0 = Sunday; set to `off` to disable). The
+defaults are built around a league whose waiver claims process Wednesday at noon and where
+free agents can be picked up on the other days:
 
-- `FFM_ANALYSIS_CRON` (default Tuesday 09:00): waiver-day review. Adds, drops, claims, IR.
-- `FFM_LINEUP_CRON` (default Sunday 09:00): pre-game lineup check.
-- `FFM_NEWS_CRON` (default Saturday 18:00): late-week injury check, after final injury reports.
+| Setting | Default | Run |
+|---|---|---|
+| `FFM_CRON_FA_SWEEP` | Monday 08:00 | Free-agent sweep after the week's games: direct adds of breakouts, no priority spent. |
+| `FFM_CRON_MARKET` | Tuesday 09:00 | Market review: claims for contested players, drops, IR, season stashes. |
+| `FFM_CRON_POST_WAIVERS` | Wednesday 12:15 | Reports how your claims resolved and picks up worthwhile leftovers. |
+| `FFM_CRON_LATE_WEEK` | Saturday 18:00 | After the final injury reports: replaces a ruled-out starter from the pool if needed, then sets the lineup. |
 
-Trade ideas are on demand only (`/trades`).
+The sweeps run with lower reasoning effort and fewer web searches than the Tuesday review to
+keep model costs down; a typical week is four runs for well under a dollar. Trade ideas and
+lineup checks are on demand (`/trades`, `/lineup`). `FFM_LEAGUE_NOTES` is free text about your
+league's pickup rules (which days are locked, when claims process) that goes into the
+advisor's briefing verbatim.
 
 Pending proposals expire after 7 days.
 
@@ -185,9 +195,9 @@ the terminal (`python -m ffm lock <name>`).
 
 The briefing tells the advisor how your league's waivers work: the waiver type and your
 priority or FAAB budget, when claims actually processed (learned from the league's transaction
-history), and the rule that a player is on waivers from his kickoff until the next waiver run.
-Early in the week it files claims; after the run it adds directly. If it guesses wrong, Sleeper's
-response tells the app, which resubmits the other way automatically and says so in the message.
+history), your pending claims and how recent ones resolved, and your `FFM_LEAGUE_NOTES`. From
+that it decides between a direct add and a claim. If it guesses wrong, Sleeper's response tells
+the app, which resubmits the other way automatically and says so in the message.
 
 ### What happens on approval
 

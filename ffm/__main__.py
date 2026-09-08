@@ -242,7 +242,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run", help="start the Discord bot and the schedule (default)")
 
     p = sub.add_parser("analyze", help="run an analysis now and print the proposals")
-    p.add_argument("--trigger", choices=["weekly_waivers", "lineup", "trades", "manual"], default="weekly_waivers")
+    p.add_argument(
+        "--trigger",
+        choices=["weekly_waivers", "fa_sweep", "post_waivers", "late_week", "lineup", "trades", "manual"],
+        default="weekly_waivers",
+    )
     p.add_argument("--focus", help="extra instructions for the advisor")
     p.add_argument("--post", action="store_true", help="also post the result to the Discord channel")
 

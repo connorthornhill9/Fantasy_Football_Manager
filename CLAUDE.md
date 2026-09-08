@@ -19,10 +19,10 @@ on Sleeper through the same GraphQL API the Sleeper web app uses.
 - `ffm/agent.py` – `Advisor`: Claude tool-runner loop; tools read the context and `propose_move` records validated proposals.
 - `ffm/executor.py` – maps an approved `Proposal` onto Sleeper mutations; dry-run support.
 - `ffm/discord_bot.py` – discord.py bot: proposal embeds with persistent buttons, slash commands.
-- `ffm/scheduler.py` – APScheduler cron jobs (Tuesday market review, Saturday and Sunday lineup checks).
-- `ffm/__main__.py` – CLI: `run`, `analyze [--trigger weekly_waivers|lineup|trades] [--post]`, `ask`, `matchup`, `snapshot`, `claims`, `whoami`, `pending`, `execute`, `reject`, `lock`/`unlock`/`locks`.
+- `ffm/scheduler.py` – APScheduler cron jobs: Monday free-agent sweep, Tuesday market review, Wednesday post-waiver sweep, Saturday replacements + lineup. Standard cron day numbering (0 = Sunday) is translated for APScheduler.
+- `ffm/__main__.py` – CLI: `run`, `analyze [--trigger weekly_waivers|fa_sweep|post_waivers|late_week|lineup|trades] [--post]`, `ask`, `matchup`, `snapshot`, `claims`, `whoami`, `pending`, `execute`, `reject`, `lock`/`unlock`/`locks`.
 
-Command roles (keep them separate): `/analyze` = roster moves on three horizons, never a lineup; `/lineup` = this week's starters only, never an add; `/matchup` = computed numbers, no model; `/trades` = advice only; `/claims` = waiver claim status.
+Command roles (keep them separate): `/analyze` = roster moves on three horizons, never a lineup; `/sweep` = quick direct adds only; `/lineup` = this week's starters only, never an add; `/matchup` = computed numbers, no model; `/trades` = advice only; `/claims` = waiver claim status. `RUN_PROFILES` in `agent.py` sets effort, web-search budget and iteration caps per run; sweeps are deliberately cheap.
 
 ## Commands
 

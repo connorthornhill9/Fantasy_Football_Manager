@@ -31,6 +31,9 @@ STATUS_COLORS = {
 }
 TRIGGER_TITLES = {
     "weekly_waivers": "Market review",
+    "fa_sweep": "Free-agent sweep",
+    "post_waivers": "Post-waiver sweep",
+    "late_week": "Injury replacements + lineup",
     "lineup": "Lineup",
     "trades": "Trade ideas",
     "manual": "Team review",
@@ -423,6 +426,13 @@ def register_commands(bot: FFMBot) -> None:
             return await deny(interaction)
         await interaction.response.send_message("Checking the lineup; results will appear in the channel.", ephemeral=True)
         await bot.run_analysis("lineup")
+
+    @tree.command(name="sweep", description="Quick free-agent sweep: direct adds worth making today (no claims, no lineup)")
+    async def sweep(interaction: discord.Interaction) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.send_message("Sweeping the free-agent pool; results will appear in the channel.", ephemeral=True)
+        await bot.run_analysis("fa_sweep")
 
     @tree.command(name="matchup", description="Optimal lineup by projection and win probability for this week (no AI call)")
     async def matchup(interaction: discord.Interaction) -> None:

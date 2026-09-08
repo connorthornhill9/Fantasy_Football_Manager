@@ -58,7 +58,8 @@ def make_ctx(locked: dict | None = None) -> LeagueContext:
     config = Config(
         sleeper_username="me", sleeper_league_id="L", sleeper_token=None, discord_bot_token=None,
         discord_channel_id=None, discord_owner_id=None, discord_guild_id=None, model="m", effort="high",
-        analysis_cron="0 9 * * 2", lineup_cron="0 9 * * 0", news_cron="0 18 * * 6", timezone=None,
+        cron_fa_sweep="0 8 * * 1", cron_market="0 9 * * 2", cron_post_waivers="15 12 * * 3", cron_late_week="0 18 * * 6",
+        league_notes="Tue: locked. Wed: claims process at noon.", timezone=None,
         data_dir=Path("."), dry_run=True, max_proposals=6, web_search=False, espn_news=False,
     )
     ctx = LeagueContext(
@@ -156,6 +157,9 @@ def test_pending_claims_are_respected():
     assert any("already in one of my pending" in e for e in errors(ctx, kind="waiver_claim", adds=["8"], faab_bid=1))
     assert any("already the drop" in e for e in errors(ctx, kind="add_drop", adds=["13"], drops=["11"]))
     assert "Free Agent (WR, BUF), drop Bench Wide" in ctx.rules_markdown()
+    ctx.recent_claims = [{"roster_ids": [1], "status": "failed", "adds": {"13": 1}, "drops": {}, "metadata": {"notes": "Claimed by higher priority"}, "created": 1}]
+    assert "LOST: add Free Backer" in ctx.recent_claims_text()
+    assert "manager's notes on this league's rules: Tue: locked" in ctx.rules_markdown()
 
 
 def test_waiver_validation():

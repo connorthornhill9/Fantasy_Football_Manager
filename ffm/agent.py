@@ -28,7 +28,7 @@ How to work:
 - Do not churn. A move must be clearly better than standing pat. Use the 'vs my lineup' and season projection columns to quantify it. Drop the least valuable bench player, never a starter for a marginal bench upgrade, and respect the active roster limit.
 - The briefing lists my pending waiver claims. Treat them as moves already made: do not claim those players again or reuse their drop-side players, and remember a claim can fail if a higher-priority team wants the same player, so mention a fallback when it matters.
 - LOCKED players may never be dropped or traded away; the tool will reject it. You may still put them in or out of the lineup, and you may mention in the summary what you would do if the manager unlocked someone.
-- Waivers: read the league's waiver rules in the briefing. Early in the week (before the league's waiver run) most players who played are on waivers, so use waiver_claim; after the run, free agents can be added directly with add or add_drop. If you guess wrong the app automatically resubmits the other way, so pick the likelier one and move on. In a FAAB league size the bid to the player's value, the competition (adds in the last 24h), and my remaining budget. In a rolling-priority league a successful claim sends me to the bottom of the order, so only claim players worth that cost, and say what priority is being spent.
+- Waivers: read the league's waiver rules in the briefing, including any day-by-day notes from the manager; they decide whether today calls for a direct add (add / add_drop) or a waiver_claim. If you guess wrong the app automatically resubmits the other way, so pick the likelier one and move on. In a FAAB league size the bid to the player's value, the competition (adds in the last 24h), and my remaining budget. In a rolling-priority league a successful claim sends me to the bottom of the order, so only claim players worth that cost, and say what priority is being spent.
 - Lineup: only propose a lineup if it changes something. The starters list must be complete and in the league's slot order, with player ids, and "0" only where no eligible player exists.
 - Keep adds/drops separate from lineup decisions. A lineup proposal must use only players currently on the roster, because the manager may reject an add and still wants to know who to start. If a player you propose adding should also be started, say so in that proposal's rationale and expected_gain (e.g. "start him at LB over Gray once added") rather than proposing a lineup that includes him.
 - The briefing states today's date. Use it to judge how fresh news is, and put the correct year in any search query.
@@ -58,6 +58,28 @@ TASKS = {
         "deviates from (or agrees with) the computed optimum. If a slot has no healthy option, say so and point the "
         "manager to /analyze. End with the projected total and win probability."
     ),
+    "fa_sweep": (
+        "Free-agent sweep the morning after this week's games (week {week} just finished; week {next_week} is next). "
+        "Today unrostered players are FREE AGENTS: direct adds, first come first served, no waiver priority spent, "
+        "and in this league a player can be added even right after he played. Look for breakouts, role changes and "
+        "injuries to other teams' starters that just created a new starter, and propose direct adds (kind add or "
+        "add_drop) for anyone clearly worth a roster spot over my weakest bench player. Tag each with a horizon. "
+        "Keep it tight: at most 3 proposals, few tool calls, no lineup, no waiver claims. If nothing stands out, say so."
+    ),
+    "post_waivers": (
+        "Waivers just processed. First report the result of each of my claims (the briefing lists recent claim "
+        "outcomes). Anyone unclaimed is now a free agent again: propose direct adds for leftovers worth a roster "
+        "spot, especially if a claim of mine failed and the fallback is still available. At most 3 proposals, few "
+        "tool calls, no lineup."
+    ),
+    "late_week": (
+        "Saturday evening: the final injury reports for week {week} are in and today is a free-agent day. Two jobs, "
+        "in order. (1) If one of my starters is Out, Doubtful or unlikely to play and no bench player is adequate, "
+        "propose a direct free-agent replacement (kind add_drop). (2) Propose my starting lineup for week {week} "
+        "using only players currently on the roster; if you also proposed an add, say in its rationale which slot he "
+        "should take if approved. Weigh injuries, practice notes, kickoff times, weather and matchups. If the "
+        "current lineup is already right and nobody needs replacing, say so in one short paragraph."
+    ),
     "trades": (
         "Trade day. Using the positional-strength table, find one to three realistic trades that make my team better "
         "for the rest of the season: target teams that are weak where I have surplus and strong where I am thin, "
@@ -81,6 +103,20 @@ WEB_SEARCH_DOMAINS = [
     "sleeper.com",
 ]
 MAX_PAUSE_RESTARTS = 3
+
+# Per-run budget: reasoning effort (capped by FFM_EFFORT), web searches, and tool-loop iterations.
+# The sweeps are quick checks; the Tuesday market review is the one worth spending on.
+RUN_PROFILES = {
+    "weekly_waivers": {"effort": None, "searches": 6, "iterations": 30},
+    "trades": {"effort": None, "searches": 3, "iterations": 25},
+    "fa_sweep": {"effort": "medium", "searches": 3, "iterations": 12},
+    "post_waivers": {"effort": "medium", "searches": 2, "iterations": 12},
+    "late_week": {"effort": "medium", "searches": 4, "iterations": 16},
+    "lineup": {"effort": "medium", "searches": 4, "iterations": 16},
+    "manual": {"effort": None, "searches": 6, "iterations": 30},
+    "ask": {"effort": "medium", "searches": 3, "iterations": 15},
+}
+EFFORT_RANK = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 
 
 @dataclass
@@ -126,17 +162,21 @@ class Advisor:
         run_id = self.store.create_run(trigger, focus)
         recorded: list[Proposal] = []
         tools = self._build_tools(ctx, recorded, allow_proposals)
-        if self.config.web_search:
+        profile = RUN_PROFILES.get(trigger, RUN_PROFILES["manual"])
+        effort = self.config.effort
+        if profile["effort"] and EFFORT_RANK.get(profile["effort"], 1) < EFFORT_RANK.get(effort, 2):
+            effort = profile["effort"]
+        if self.config.web_search and profile["searches"] > 0:
             tools.append(
                 {
                     "type": "web_search_20260209",
                     "name": "web_search",
-                    "max_uses": 6,
+                    "max_uses": profile["searches"],
                     "allowed_domains": WEB_SEARCH_DOMAINS,
                 }
             )
 
-        task = TASKS.get(trigger, TASKS["manual"]).format(week=ctx.week, focus=focus or "general review")
+        task = TASKS.get(trigger, TASKS["manual"]).format(week=ctx.week, next_week=ctx.week + 1, focus=focus or "general review")
         if trigger not in ("ask", "manual") and focus:
             task += f"\nAdditional instructions from the manager: {focus}"
         now = datetime.now(ZoneInfo(self.config.timezone)) if self.config.timezone else datetime.now().astimezone()
@@ -155,7 +195,7 @@ class Advisor:
             kwargs["betas"] = ["server-side-fallback-2026-07-01"]
             kwargs["fallbacks"] = "default"
 
-        log.info("Starting analysis run %s (trigger=%s, model=%s)", run_id, trigger, model)
+        log.info("Starting analysis run %s (trigger=%s, model=%s, effort=%s)", run_id, trigger, model, effort)
         usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "iterations": 0}
         final = None
         try:
@@ -168,9 +208,9 @@ class Advisor:
                     messages=messages,
                     tools=tools,
                     thinking={"type": "adaptive"},
-                    output_config={"effort": self.config.effort},
+                    output_config={"effort": effort},
                     cache_control={"type": "ephemeral"},
-                    max_iterations=30,
+                    max_iterations=profile["iterations"],
                     **kwargs,
                 )
                 last = None

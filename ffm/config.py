@@ -53,10 +53,12 @@ class Config:
     model: str
     effort: str
 
-    # Behaviour
-    analysis_cron: str
-    lineup_cron: str
-    news_cron: str
+    # Behaviour (cron strings, standard 5-field, 0 = Sunday; "off" disables a run)
+    cron_fa_sweep: str
+    cron_market: str
+    cron_post_waivers: str
+    cron_late_week: str
+    league_notes: str | None
     timezone: str | None
     data_dir: Path
     dry_run: bool
@@ -87,9 +89,11 @@ class Config:
             discord_guild_id=_int(os.environ.get("DISCORD_GUILD_ID")),
             model=_str(os.environ.get("FFM_MODEL")) or "claude-opus-5",
             effort=_str(os.environ.get("FFM_EFFORT")) or "high",
-            analysis_cron=_str(os.environ.get("FFM_ANALYSIS_CRON")) or "0 9 * * 2",
-            lineup_cron=_str(os.environ.get("FFM_LINEUP_CRON")) or "0 9 * * 0",
-            news_cron=_str(os.environ.get("FFM_NEWS_CRON")) or "0 18 * * 6",
+            cron_fa_sweep=_str(os.environ.get("FFM_CRON_FA_SWEEP")) or "0 8 * * 1",
+            cron_market=_str(os.environ.get("FFM_CRON_MARKET")) or "0 9 * * 2",
+            cron_post_waivers=_str(os.environ.get("FFM_CRON_POST_WAIVERS")) or "15 12 * * 3",
+            cron_late_week=_str(os.environ.get("FFM_CRON_LATE_WEEK")) or "0 18 * * 6",
+            league_notes=_str(os.environ.get("FFM_LEAGUE_NOTES")),
             timezone=_str(os.environ.get("FFM_TIMEZONE")),
             data_dir=data_dir,
             dry_run=_bool(os.environ.get("FFM_DRY_RUN"), default=False),
