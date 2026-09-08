@@ -82,6 +82,11 @@ async def cmd_claims(app: App, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_introduce(app: App, args: argparse.Namespace) -> int:
+    print(await app.advisor.introduce(" ".join(args.persona) if args.persona else None))
+    return 0
+
+
 async def cmd_matchup(app: App, args: argparse.Namespace) -> int:
     if args.post:
         from .discord_bot import FFMBot
@@ -259,6 +264,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("claims", help="list my waiver claims and their outcomes")
 
+    p = sub.add_parser("introduce", help="print a funny self-introduction for the league")
+    p.add_argument("persona", nargs="*", help="optional personality to imitate, e.g. John Madden")
+
     p = sub.add_parser("matchup", help="optimal lineup by projection and win probability (no AI call)")
     p.add_argument("--post", action="store_true", help="also post it to the Discord channel")
 
@@ -286,6 +294,7 @@ COMMANDS = {
     "ask": cmd_ask,
     "snapshot": cmd_snapshot,
     "claims": cmd_claims,
+    "introduce": cmd_introduce,
     "matchup": cmd_matchup,
     "whoami": cmd_whoami,
     "pending": cmd_pending,

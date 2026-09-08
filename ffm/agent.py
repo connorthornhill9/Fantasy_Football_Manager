@@ -157,6 +157,43 @@ class Advisor:
     async def player_db(self) -> PlayerDB:
         return PlayerDB(await self.public.get_all_players())
 
+    async def introduce(self, persona: str | None = None) -> str:
+        """A short, funny public introduction of the bot as the team's manager (one cheap model call, no tools)."""
+        ctx = await self.build_context()
+        s = ctx.my_roster.get("settings") or {}
+        starters = [ctx.players.name(p) for _, p in ctx.roster_sections(ctx.my_roster)["starters"] if p != "0"][:6]
+        opp = ctx.opponent_roster()
+        facts = "\n".join(
+            [
+                f"Team: {ctx.owner_name(ctx.my_roster)} in the league '{ctx.league_name}' ({ctx.league.get('total_rosters')} teams)",
+                f"Record: {s.get('wins', 0)}-{s.get('losses', 0)}, week {ctx.week} of the {ctx.season} season",
+                f"Some starters: {', '.join(starters)}",
+                f"This week's opponent: {ctx.owner_name(opp) if opp else 'nobody'}",
+                f"Waiver priority: {s.get('waiver_position', '?')} of {ctx.league.get('total_rosters')}",
+                f"Other teams in the league: {', '.join(ctx.owner_name(r) for r in ctx.rosters if int(r['roster_id']) != ctx.my_roster_id)}",
+            ]
+        )
+        style = (
+            f"Adopt the persona of {persona} (a loving parody of their style and catchphrases, clearly a tribute, not a claim to be them)."
+            if persona
+            else "Invent your own name and personality for yourself as an AI front-office executive. Commit to the bit."
+        )
+        prompt = (
+            "You are the AI assistant general manager of a fantasy football team, being introduced to the rest of the "
+            "league in the team's Discord. Write a short introduction of yourself, in first person, that the manager can "
+            "post to leaguemates. Be funny, confident and a little cocky about the team, with one or two light jabs at the "
+            "other teams by name and a nod to the rolling-waiver grind. Mention that the manager approves every move, so "
+            "nobody can blame the robot. Under 900 characters, Discord-friendly (light bold, no headers, no tables). "
+            f"{style}\n\nFacts you may use:\n{facts}"
+        )
+        response = await self.client.messages.create(
+            model=self.config.model,
+            max_tokens=700,
+            output_config={"effort": "low"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(b.text for b in response.content if b.type == "text").strip() or "(no introduction produced)"
+
     async def run(self, trigger: str, focus: str | None = None, allow_proposals: bool = True) -> RunResult:
         ctx = await self.build_context()
         run_id = self.store.create_run(trigger, focus)

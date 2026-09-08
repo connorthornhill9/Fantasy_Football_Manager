@@ -427,6 +427,19 @@ def register_commands(bot: FFMBot) -> None:
         await interaction.response.send_message("Checking the lineup; results will appear in the channel.", ephemeral=True)
         await bot.run_analysis("lineup")
 
+    @tree.command(name="introduce", description="Have the bot introduce itself as your team's manager (posted publicly, for the league to see)")
+    @app_commands.describe(persona="Optional: a personality to imitate, e.g. 'John Madden'. Leave blank and it invents its own.")
+    async def introduce(interaction: discord.Interaction, persona: str | None = None) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.defer(thinking=True)
+        try:
+            text = await bot.app.advisor.introduce(persona)
+        except Exception as exc:  # noqa: BLE001
+            await interaction.followup.send(f"Could not write an introduction: {exc}", ephemeral=True)
+            return
+        await interaction.followup.send(text[:1990])
+
     @tree.command(name="sweep", description="Quick free-agent sweep: direct adds worth making today (no claims, no lineup)")
     async def sweep(interaction: discord.Interaction) -> None:
         if not owner_only(interaction):
