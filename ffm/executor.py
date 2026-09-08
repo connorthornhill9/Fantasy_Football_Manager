@@ -31,10 +31,13 @@ class ExecutionResult:
 
 
 class Executor:
-    def __init__(self, auth: SleeperAuth | None, dry_run: bool = False, public: SleeperPublic | None = None):
+    def __init__(
+        self, auth: SleeperAuth | None, dry_run: bool = False, public: SleeperPublic | None = None, verify_delay: float = 2.0
+    ):
         self.auth = auth
         self.dry_run = dry_run or auth is None
         self.public = public
+        self.verify_delay = verify_delay
 
     async def execute(self, proposal: Proposal, target: ExecTarget) -> ExecutionResult:
         plan = self.describe_call(proposal, target)
@@ -105,8 +108,8 @@ class Executor:
                 problem = self._check_roster(p, mine) if mine else "my roster was not found"
             if problem is None:
                 return None
-            if attempt < attempts - 1:
-                await asyncio.sleep(2 * (attempt + 1))
+            if attempt < attempts - 1 and self.verify_delay > 0:
+                await asyncio.sleep(self.verify_delay * (attempt + 1))
         return problem
 
     @staticmethod
@@ -136,20 +139,30 @@ class Executor:
 
     def describe_call(self, p: Proposal, t: ExecTarget) -> str:
         if p.kind in ("add", "drop", "add_drop"):
-            return f"create_free_agent adds={p.adds} drops={p.drops}"
+            return f"add/drop adds={p.adds} drops={p.drops}"
         if p.kind == "waiver_claim":
-            return f"create_waiver_claim adds={p.adds} drops={p.drops} bid={p.faab_bid or 0}"
+            bid = f" bid=${p.faab_bid}" if p.faab_bid is not None else ""
+            return f"waiver claim adds={p.adds} drops={p.drops}{bid}"
         if p.kind == "lineup":
-            return f"update_roster_starters leg={t.leg} starters={p.starters}"
+            return f"set starters week {t.leg}: {p.starters}"
         if p.kind == "ir":
-            return f"move_to_ir player={(p.drops or p.adds)[0]}"
+            return f"move to IR player={(p.drops or p.adds)[0]}"
         if p.kind == "activate_ir":
-            return f"activate_from_ir player={(p.adds or p.drops)[0]}"
+            return f"activate from IR player={(p.adds or p.drops)[0]}"
         if p.kind == "taxi":
-            return f"move_to_taxi player={(p.drops or p.adds)[0]}"
+            return f"move to taxi player={(p.drops or p.adds)[0]}"
         if p.kind == "trade":
             return f"propose_trade partner={p.trade_partner_roster_id} give={p.i_give} get={p.i_get}"
         return p.kind
+
+    async def _my_roster(self, t: ExecTarget) -> dict:
+        if self.public is None:
+            raise ValueError("a Sleeper read client is required for IR/taxi moves")
+        rosters = await self.public.get_rosters(t.league_id)
+        mine = next((r for r in rosters if int(r.get("roster_id", -1)) == t.roster_id), None)
+        if mine is None:
+            raise ValueError("my roster was not found")
+        return mine
 
     async def _dispatch(self, p: Proposal, t: ExecTarget) -> dict:
         auth = self.auth
@@ -158,18 +171,23 @@ class Executor:
             return await auth.add_drop(t.league_id, t.roster_id, adds=list(p.adds), drops=list(p.drops))
         if p.kind == "waiver_claim":
             return await auth.waiver_claim(
-                t.league_id, t.roster_id, adds=list(p.adds), drops=list(p.drops), faab_bid=p.faab_bid or 0
+                t.league_id, t.roster_id, adds=list(p.adds), drops=list(p.drops), faab_bid=p.faab_bid
             )
         if p.kind == "lineup":
             if not p.starters:
                 raise ValueError("lineup proposal has no starters")
-            return await auth.set_starters(t.league_id, t.roster_id, [str(s) for s in p.starters], leg=t.leg)
-        if p.kind == "ir":
-            return await auth.move_to_ir(t.league_id, t.roster_id, (p.drops or p.adds)[0])
-        if p.kind == "activate_ir":
-            return await auth.activate_from_ir(t.league_id, t.roster_id, (p.adds or p.drops)[0])
+            return await auth.set_starters(t.league_id, t.roster_id, [str(s) for s in p.starters])
+        if p.kind in ("ir", "activate_ir"):
+            roster = await self._my_roster(t)
+            reserve = [str(x) for x in (roster.get("reserve") or [])]
+            pid = (p.drops or p.adds)[0] if p.kind == "ir" else (p.adds or p.drops)[0]
+            reserve = [x for x in reserve if x != pid] + ([pid] if p.kind == "ir" else [])
+            return await auth.set_reserve(t.league_id, t.roster_id, reserve)
         if p.kind == "taxi":
-            return await auth.move_to_taxi(t.league_id, t.roster_id, (p.drops or p.adds)[0])
+            roster = await self._my_roster(t)
+            pid = (p.drops or p.adds)[0]
+            taxi = [str(x) for x in (roster.get("taxi") or []) if str(x) != pid] + [pid]
+            return await auth.set_taxi(t.league_id, t.roster_id, taxi)
         if p.kind == "trade":
             if p.trade_partner_roster_id is None:
                 raise ValueError("trade proposal has no partner")

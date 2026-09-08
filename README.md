@@ -244,7 +244,9 @@ See `CLAUDE.md` for a file-by-file map.
 
 ## Credits
 
-The Sleeper GraphQL mutation shapes were documented by the community in
-[cameron-eth/sleeper-sdk](https://github.com/cameron-eth/sleeper-sdk). Player data, projections
+The idea of driving Sleeper through its GraphQL endpoint with a browser token comes from
+[cameron-eth/sleeper-sdk](https://github.com/cameron-eth/sleeper-sdk); the mutation names in
+this project were confirmed against Sleeper's live schema by introspection, since the older
+names had been retired. Player data, projections
 and league data come from [Sleeper](https://docs.sleeper.com/) and are used for personal,
 non-commercial purposes.

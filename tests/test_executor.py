@@ -21,23 +21,30 @@ class FakeAuth:
     async def add_drop(self, league_id, roster_id, adds, drops):
         return await self._record("add_drop", league_id, roster_id, adds=adds, drops=drops)
 
-    async def waiver_claim(self, league_id, roster_id, adds, drops, faab_bid=0):
+    async def waiver_claim(self, league_id, roster_id, adds, drops, faab_bid=None):
         return await self._record("waiver_claim", league_id, roster_id, adds=adds, drops=drops, faab_bid=faab_bid)
 
-    async def set_starters(self, league_id, roster_id, starters, leg):
-        return await self._record("set_starters", league_id, roster_id, starters=starters, leg=leg)
+    async def set_starters(self, league_id, roster_id, starters):
+        return await self._record("set_starters", league_id, roster_id, starters=starters)
 
-    async def move_to_ir(self, league_id, roster_id, player_id):
-        return await self._record("move_to_ir", league_id, roster_id, player_id=player_id)
+    async def set_reserve(self, league_id, roster_id, reserve):
+        return await self._record("set_reserve", league_id, roster_id, reserve=reserve)
 
-    async def activate_from_ir(self, league_id, roster_id, player_id):
-        return await self._record("activate_from_ir", league_id, roster_id, player_id=player_id)
-
-    async def move_to_taxi(self, league_id, roster_id, player_id):
-        return await self._record("move_to_taxi", league_id, roster_id, player_id=player_id)
+    async def set_taxi(self, league_id, roster_id, taxi):
+        return await self._record("set_taxi", league_id, roster_id, taxi=taxi)
 
     async def propose_trade(self, league_id, adds, drops, draft_picks=None, waiver_budget=None, expires_at=None):
         return await self._record("propose_trade", league_id, adds=adds, drops=drops)
+
+
+class FakePublic:
+    """Read client returning a fixed roster: players 7 and 9 active, 8 on IR, 5 on taxi."""
+
+    def __init__(self):
+        self.roster = {"roster_id": 4, "players": ["5", "7", "8", "9"], "starters": ["7"], "reserve": ["8"], "taxi": ["5"]}
+
+    async def get_rosters(self, league_id):
+        return [dict(self.roster), {"roster_id": 9, "players": ["A"]}]
 
 
 def run(coro):
@@ -61,22 +68,37 @@ def test_waiver_claim_passes_bid():
     assert auth.calls[0][2]["faab_bid"] == 17
 
 
-def test_lineup_uses_current_leg():
+def test_lineup_sets_starters():
     auth = FakeAuth()
     p = Proposal(kind="lineup", starters=["1", "2", "0"], rationale="r")
     run(Executor(auth).execute(p, TARGET))
-    assert auth.calls[0] == ("set_starters", ("L1", 4), {"starters": ["1", "2", "0"], "leg": 7})
+    assert auth.calls[0] == ("set_starters", ("L1", 4), {"starters": ["1", "2", "0"]})
 
 
-def test_ir_taxi_activate():
+def test_ir_taxi_activate_send_full_lists():
     auth = FakeAuth()
-    ex = Executor(auth)
+    ex = Executor(auth, public=FakePublic(), verify_delay=0)
+    # verification reads the same fixed roster, so it reports a mismatch; we only check the calls here
     run(ex.execute(Proposal(kind="ir", drops=["9"], rationale="r"), TARGET))
-    run(ex.execute(Proposal(kind="taxi", drops=["8"], rationale="r"), TARGET))
-    run(ex.execute(Proposal(kind="activate_ir", adds=["7"], rationale="r"), TARGET))
-    names = [c[0] for c in auth.calls]
-    assert names == ["move_to_ir", "move_to_taxi", "activate_from_ir"]
-    assert auth.calls[0][2]["player_id"] == "9"
+    run(ex.execute(Proposal(kind="taxi", drops=["7"], rationale="r"), TARGET))
+    run(ex.execute(Proposal(kind="activate_ir", adds=["8"], rationale="r"), TARGET))
+    assert auth.calls[0] == ("set_reserve", ("L1", 4), {"reserve": ["8", "9"]})
+    assert auth.calls[1] == ("set_taxi", ("L1", 4), {"taxi": ["5", "7"]})
+    assert auth.calls[2] == ("set_reserve", ("L1", 4), {"reserve": []})
+
+
+def test_ir_without_read_client_is_an_error():
+    result = run(Executor(FakeAuth()).execute(Proposal(kind="ir", drops=["9"], rationale="r"), TARGET))
+    assert not result.ok and "read client" in result.message
+
+
+def test_verification_reports_missing_change():
+    auth = FakeAuth()
+    ex = Executor(auth, public=FakePublic(), verify_delay=0)
+    result = run(ex.execute(Proposal(kind="add_drop", adds=["Z"], drops=["7"], rationale="r"), TARGET))
+    assert not result.ok and "does not show it" in result.message
+    ok = run(ex.execute(Proposal(kind="add", adds=["9"], rationale="r"), TARGET))
+    assert ok.ok and "Verified" in ok.message
 
 
 def test_trade_maps_receivers_and_senders():
