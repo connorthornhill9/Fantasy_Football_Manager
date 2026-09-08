@@ -25,6 +25,42 @@ def resolve_timezone(config: Config) -> tzinfo | None:
     return ZoneInfo(config.timezone) if config.timezone else None
 
 
+_DOW_NAMES = "mon tue wed thu fri sat sun".split()
+
+
+def _cron_dow_to_apscheduler(field: str) -> str:
+    """Translate a standard-cron day-of-week field (0 = Sunday) into APScheduler's (0 = Monday).
+
+    Names (sun, tue) and '*' pass through; numbers, lists, ranges and steps are converted.
+    """
+    def convert(token: str) -> str:
+        if token.isdigit():
+            return _DOW_NAMES[(int(token) - 1) % 7]
+        return token
+
+    out = []
+    for part in field.split(","):
+        step = None
+        if "/" in part:
+            part, step = part.split("/", 1)
+        if "-" in part and part[0].isdigit():
+            a, b = part.split("-", 1)
+            part = f"{convert(a)}-{convert(b)}"
+        else:
+            part = convert(part)
+        out.append(f"{part}/{step}" if step else part)
+    return ",".join(out)
+
+
+def cron_trigger(expr: str, tz: tzinfo | None) -> CronTrigger:
+    """CronTrigger from a standard 5-field cron string (Sunday = 0, like crontab and most docs)."""
+    fields = expr.split()
+    if len(fields) != 5:
+        raise ValueError(f"cron expression must have 5 fields: {expr!r}")
+    minute, hour, day, month, dow = fields
+    return CronTrigger(minute=minute, hour=hour, day=day, month=month, day_of_week=_cron_dow_to_apscheduler(dow), timezone=tz)
+
+
 def build_scheduler(config: Config, run: Callable[[str], Awaitable[object]]) -> AsyncIOScheduler:
     tz = resolve_timezone(config)
     scheduler = AsyncIOScheduler(timezone=tz) if tz else AsyncIOScheduler()
@@ -34,7 +70,7 @@ def build_scheduler(config: Config, run: Callable[[str], Awaitable[object]]) -> 
             continue
         scheduler.add_job(
             run,
-            CronTrigger.from_crontab(expr, timezone=tz),
+            cron_trigger(expr, tz),
             args=[trigger],
             id=job_id,
             name=name,
