@@ -59,6 +59,7 @@ class Config:
     cron_post_waivers: str
     cron_late_week: str
     league_notes: str | None
+    roast_rating: str  # "pg13" or "r"
     timezone: str | None
     data_dir: Path
     dry_run: bool
@@ -94,6 +95,7 @@ class Config:
             cron_post_waivers=_str(os.environ.get("FFM_CRON_POST_WAIVERS")) or "15 12 * * 3",
             cron_late_week=_str(os.environ.get("FFM_CRON_LATE_WEEK")) or "0 18 * * 6",
             league_notes=_str(os.environ.get("FFM_LEAGUE_NOTES")),
+            roast_rating=(_str(os.environ.get("FFM_ROAST_RATING")) or "pg13").lower().replace("-", ""),
             timezone=_str(os.environ.get("FFM_TIMEZONE")),
             data_dir=data_dir,
             dry_run=_bool(os.environ.get("FFM_DRY_RUN"), default=False),

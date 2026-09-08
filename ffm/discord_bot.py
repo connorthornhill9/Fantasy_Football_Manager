@@ -427,27 +427,31 @@ def register_commands(bot: FFMBot) -> None:
         await interaction.response.send_message("Checking the lineup; results will appear in the channel.", ephemeral=True)
         await bot.run_analysis("lineup")
 
+    RATINGS = [app_commands.Choice(name="PG-13", value="pg13"), app_commands.Choice(name="R", value="r")]
+
     @tree.command(name="introduce", description="Have the bot introduce itself as your team's manager (posted publicly, for the league to see)")
-    @app_commands.describe(persona="Optional: a personality to imitate, e.g. 'John Madden'. Leave blank and it invents its own.")
-    async def introduce(interaction: discord.Interaction, persona: str | None = None) -> None:
+    @app_commands.describe(persona="Optional: a personality to imitate, e.g. 'John Madden'. Leave blank and it invents its own.", rating="PG-13 or R (default from FFM_ROAST_RATING)")
+    @app_commands.choices(rating=RATINGS)
+    async def introduce(interaction: discord.Interaction, persona: str | None = None, rating: str | None = None) -> None:
         if not owner_only(interaction):
             return await deny(interaction)
         await interaction.response.defer(thinking=True)
         try:
-            text = await bot.app.advisor.introduce(persona)
+            text = await bot.app.advisor.introduce(persona, rating)
         except Exception as exc:  # noqa: BLE001
             await interaction.followup.send(f"Could not write an introduction: {exc}", ephemeral=True)
             return
         await interaction.followup.send(text[:1990])
 
     @tree.command(name="roast", description="Smack talk the other teams from their actual rosters (posted publicly)")
-    @app_commands.describe(team="Optional: one team name to roast; leave blank for the whole league", persona="Optional personality to imitate")
-    async def roast(interaction: discord.Interaction, team: str | None = None, persona: str | None = None) -> None:
+    @app_commands.describe(team="Optional: one team name to roast; leave blank for the whole league", persona="Optional personality to imitate", rating="PG-13 or R (default from FFM_ROAST_RATING)")
+    @app_commands.choices(rating=RATINGS)
+    async def roast(interaction: discord.Interaction, team: str | None = None, persona: str | None = None, rating: str | None = None) -> None:
         if not owner_only(interaction):
             return await deny(interaction)
         await interaction.response.defer(thinking=True)
         try:
-            text = await bot.app.advisor.roast(team, persona)
+            text = await bot.app.advisor.roast(team, persona, rating)
         except Exception as exc:  # noqa: BLE001
             await interaction.followup.send(f"Could not write a roast: {exc}", ephemeral=True)
             return

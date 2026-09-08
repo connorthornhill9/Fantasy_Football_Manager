@@ -157,7 +157,17 @@ class Advisor:
     async def player_db(self) -> PlayerDB:
         return PlayerDB(await self.public.get_all_players())
 
-    async def introduce(self, persona: str | None = None) -> str:
+    def _tone(self, rating: str | None) -> str:
+        rating = (rating or self.config.roast_rating or "pg13").lower().replace("-", "")
+        if rating == "r":
+            return (
+                "Rating: R. The league is all adults who asked for this: swearing, crude jokes and brutal honesty are "
+                "welcome and expected. Hard lines that still apply: no slurs of any kind, nothing sexual about real people, "
+                "and roast the fantasy rosters and results, never anyone's personal life, looks, family or job."
+            )
+        return "Rating: PG-13. Witty rather than cruel, no slurs, nothing about anyone's personal life."
+
+    async def introduce(self, persona: str | None = None, rating: str | None = None) -> str:
         """A short, funny public introduction of the bot as the team's manager (one cheap model call, no tools)."""
         ctx = await self.build_context()
         s = ctx.my_roster.get("settings") or {}
@@ -184,7 +194,7 @@ class Advisor:
             "post to leaguemates. Be funny, confident and a little cocky about the team, with one or two light jabs at the "
             "other teams by name and a nod to the rolling-waiver grind. Mention that the manager approves every move, so "
             "nobody can blame the robot. Under 900 characters, Discord-friendly (light bold, no headers, no tables). "
-            f"{style}\n\nFacts you may use:\n{facts}"
+            f"{style} {self._tone(rating)}\n\nFacts you may use:\n{facts}"
         )
         response = await self.client.messages.create(
             model=self.config.model,
@@ -194,7 +204,7 @@ class Advisor:
         )
         return "".join(b.text for b in response.content if b.type == "text").strip() or "(no introduction produced)"
 
-    async def roast(self, target: str | None = None, persona: str | None = None) -> str:
+    async def roast(self, target: str | None = None, persona: str | None = None, rating: str | None = None) -> str:
         """Smack talk about the other teams (or one team), built from their actual rosters. One cheap model call."""
         ctx = await self.build_context()
         others = [r for r in ctx.rosters if int(r["roster_id"]) != ctx.my_roster_id]
@@ -204,7 +214,12 @@ class Advisor:
             if not others:
                 names = ", ".join(ctx.owner_name(r) for r in ctx.rosters if int(r["roster_id"]) != ctx.my_roster_id)
                 return f"No team matches '{target}'. Teams: {names}"
-        needs = "\n".join(line for line in ctx.team_needs_markdown().splitlines() if "(me)" not in line)
+        keep_ids = {str(r["roster_id"]) for r in others}
+        needs = "\n".join(
+            line
+            for line in ctx.team_needs_markdown().splitlines()
+            if "(me)" not in line and (line.startswith("| Roster") or line.startswith("|---") or line.split("|")[1].strip() in keep_ids)
+        )
         cards = []
         for r in others:
             s = r.get("settings") or {}
@@ -221,14 +236,18 @@ class Advisor:
             if persona
             else "Speak as the team's cocky AI general manager."
         )
-        scope = "one paragraph per team, every team listed, in a random order" if len(others) > 1 else "one short, devastating paragraph"
+        scope = (
+            "one paragraph per team, every team listed, in a random order"
+            if len(others) > 1
+            else f"ONLY the team {ctx.owner_name(others[0])}, one short, devastating paragraph; do not mention any other team"
+        )
         prompt = (
             f"You manage the fantasy football team {ctx.owner_name(ctx.my_roster)} in the league '{ctx.league_name}'. "
             f"Write smack talk about the OTHER teams for the league's Discord: {scope}. Never roast or mention weaknesses of "
             f"my own team ({ctx.owner_name(ctx.my_roster)}); I am the one talking. Roast the TEAMS, never the people: "
             "their positional holes, injured starters, record, waiver spot, thin benches, questionable starters. Use the "
             "positional-strength table and the team cards below for real material, and name at least one actual player per "
-            "team. Keep it PG-13, witty rather than cruel, no slurs, nothing about anyone's personal life. Bold each team "
+            f"team. {self._tone(rating)} Bold each team "
             f"name. Discord-friendly, no headers or tables. {'Under 1800 characters total.' if len(others) > 1 else 'Under 600 characters.'} {style}\n\n"
             f"Positional strength (percent of league average):\n{needs}\n\nTeam cards:\n" + "\n".join(cards)
         )

@@ -88,7 +88,7 @@ async def cmd_introduce(app: App, args: argparse.Namespace) -> int:
 
 
 async def cmd_roast(app: App, args: argparse.Namespace) -> int:
-    print(await app.advisor.roast(" ".join(args.team) if args.team else None, args.persona))
+    print(await app.advisor.roast(" ".join(args.team) if args.team else None, args.persona, args.rating))
     return 0
 
 
@@ -275,6 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("roast", help="smack talk the other teams (or one team)")
     p.add_argument("team", nargs="*", help="optional team name; blank = whole league")
     p.add_argument("--persona", help="optional personality to imitate")
+    p.add_argument("--rating", choices=["pg13", "r"], help="override FFM_ROAST_RATING")
 
     p = sub.add_parser("matchup", help="optimal lineup by projection and win probability (no AI call)")
     p.add_argument("--post", action="store_true", help="also post it to the Discord channel")
