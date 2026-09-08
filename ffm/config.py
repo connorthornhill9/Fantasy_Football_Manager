@@ -57,7 +57,6 @@ class Config:
     analysis_cron: str
     lineup_cron: str
     news_cron: str
-    trade_cron: str
     timezone: str | None
     data_dir: Path
     dry_run: bool
@@ -91,7 +90,6 @@ class Config:
             analysis_cron=_str(os.environ.get("FFM_ANALYSIS_CRON")) or "0 9 * * 2",
             lineup_cron=_str(os.environ.get("FFM_LINEUP_CRON")) or "0 9 * * 0",
             news_cron=_str(os.environ.get("FFM_NEWS_CRON")) or "0 18 * * 6",
-            trade_cron=_str(os.environ.get("FFM_TRADE_CRON")) or "0 12 * * 3",
             timezone=_str(os.environ.get("FFM_TIMEZONE")),
             data_dir=data_dir,
             dry_run=_bool(os.environ.get("FFM_DRY_RUN"), default=False),

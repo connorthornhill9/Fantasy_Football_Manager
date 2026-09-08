@@ -58,7 +58,7 @@ def make_ctx(locked: dict | None = None) -> LeagueContext:
     config = Config(
         sleeper_username="me", sleeper_league_id="L", sleeper_token=None, discord_bot_token=None,
         discord_channel_id=None, discord_owner_id=None, discord_guild_id=None, model="m", effort="high",
-        analysis_cron="0 9 * * 2", lineup_cron="0 9 * * 0", news_cron="0 18 * * 6", trade_cron="0 12 * * 3", timezone=None,
+        analysis_cron="0 9 * * 2", lineup_cron="0 9 * * 0", news_cron="0 18 * * 6", timezone=None,
         data_dir=Path("."), dry_run=True, max_proposals=6, web_search=False, espn_news=False,
     )
     ctx = LeagueContext(

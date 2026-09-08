@@ -135,7 +135,8 @@ Scheduled runs (configurable in `.env`, cron syntax, 0 = Sunday; set to `off` to
 - `FFM_ANALYSIS_CRON` (default Tuesday 09:00): waiver-day review. Adds, drops, claims, IR.
 - `FFM_LINEUP_CRON` (default Sunday 09:00): pre-game lineup check.
 - `FFM_NEWS_CRON` (default Saturday 18:00): late-week injury check, after final injury reports.
-- `FFM_TRADE_CRON` (default Wednesday 12:00): trade ideas.
+
+Trade ideas are on demand only (`/trades`).
 
 Pending proposals expire after 7 days.
 
@@ -151,7 +152,7 @@ spending anything on the model.
 
 ### Trade ideas
 
-`/trades` (and the Wednesday schedule) builds a table of every team's positional strength
+`/trades` builds a table of every team's positional strength
 relative to the league and asks the advisor for one to three realistic offers. They are posted
 as advice with no buttons; if you like one, send it yourself in Sleeper. The advisor never
 offers locked players.
@@ -184,6 +185,14 @@ the terminal (`python -m ffm lock <name>`).
 | lineup | Sets your starters for the current week |
 | ir, activate_ir, taxi | Moves the player to/from IR or taxi |
 | trade | Sends the trade offer to the other manager (they still have to accept) |
+
+### Waivers
+
+The briefing tells the advisor how your league's waivers work: the waiver type and your
+priority or FAAB budget, when claims actually processed (learned from the league's transaction
+history), and the rule that a player is on waivers from his kickoff until the next waiver run.
+Early in the week it files claims; after the run it adds directly. If it guesses wrong, Sleeper's
+response tells the app, which resubmits the other way automatically and says so in the message.
 
 ### What happens on approval
 

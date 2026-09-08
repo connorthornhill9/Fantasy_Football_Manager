@@ -92,6 +92,16 @@ class SleeperPublic:
     async def get_traded_picks(self, league_id: str) -> list[dict]:
         return await self._get(f"/v1/league/{league_id}/traded_picks") or []
 
+    async def get_season_transactions(self, league_id: str, weeks: int = 18) -> list[dict]:
+        """Every transaction of a league season (cached per process; used to learn the waiver cadence)."""
+        cache = getattr(self, "_season_tx_cache", None)
+        if cache is None:
+            cache = self._season_tx_cache = {}
+        if league_id not in cache:
+            weekly = await asyncio.gather(*(self.get_transactions(league_id, w) for w in range(1, weeks + 1)))
+            cache[league_id] = [t for txs in weekly for t in txs]
+        return cache[league_id]
+
     async def get_state(self, sport: str = "nfl") -> dict:
         state = await self._get(f"/v1/state/{sport}")
         if not state:

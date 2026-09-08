@@ -87,6 +87,37 @@ def summary_embed(result: RunResult, trigger: str) -> discord.Embed:
     return embed
 
 
+def matchup_embed(ctx) -> discord.Embed:
+    s = ctx.matchup_summary()
+    starts, sits, gain = ctx.lineup_changes()
+    players = ctx.players
+    embed = discord.Embed(title=f"Week {ctx.week} matchup", color=discord.Color.dark_teal())
+    if s.get("opponent"):
+        embed.description = (
+            f"**{ctx.owner_name(ctx.my_roster)}** {s['my_current']:.1f} proj  vs  **{s['opponent']}** {s['opp_current']:.1f} proj\n"
+            f"Win probability: **{s['win_prob_current']:.0%}** with current lineups, {s['win_prob_optimal']:.0%} if both start their best."
+        )
+    else:
+        embed.description = f"Projected {s['my_current']:.1f}. No opponent this week."
+    embed.add_field(name="Best lineup by projection", value=f"```\n{ctx.optimal_lineup_compact()}\n```", inline=False)
+    if starts or sits:
+        lines = []
+        if starts:
+            lines.append("Start: " + ", ".join(f"{players.name(p)} ({_pts(ctx.proj_pts(p))})" for p in starts))
+        if sits:
+            lines.append("Sit: " + ", ".join(f"{players.name(p)} ({_pts(ctx.proj_pts(p))})" for p in sits))
+        lines.append(f"Projected gain: {gain:+.1f}")
+        embed.add_field(name="Changes from your current lineup (* above)", value="\n".join(lines)[:1024], inline=False)
+    else:
+        embed.add_field(name="Changes", value="Your current lineup is already the best by projection.", inline=False)
+    embed.set_footer(text="Projections exclude players marked Out, Doubtful, IR or suspended. Win probability is a heuristic.")
+    return embed
+
+
+def _pts(value: float | None) -> str:
+    return "-" if value is None else f"{value:.1f}"
+
+
 # ---------------------------------------------------------------------- persistent buttons
 
 
@@ -233,14 +264,8 @@ class FFMBot(commands.Bot):
         """Post the computed optimal lineup and win probability (no model call)."""
         ctx = await self.app.advisor.build_context()
         self._players = ctx.players
-        text = re.sub(r" \[\d+\]", "", ctx.optimal_lineup_markdown())
-        embed = discord.Embed(
-            title=f"Matchup — week {ctx.week}",
-            description=f"{ctx.matchup_summary_markdown()}\n```\n{text[:3500]}\n```",
-            color=discord.Color.dark_teal(),
-        )
         target = channel or await self.target_channel()
-        await target.send(embed=embed)
+        await target.send(embed=matchup_embed(ctx))
 
     # ----------------------------------------------------------------- decisions
 
@@ -381,13 +406,7 @@ def register_commands(bot: FFMBot) -> None:
             await interaction.followup.send(f"Could not load the league: {exc}")
             return
         bot._players = ctx.players
-        text = re.sub(r" \[\d+\]", "", ctx.optimal_lineup_markdown())
-        embed = discord.Embed(
-            title=f"Matchup — week {ctx.week}",
-            description=f"{ctx.matchup_summary_markdown()}\n```\n{text[:3500]}\n```",
-            color=discord.Color.dark_teal(),
-        )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=matchup_embed(ctx))
 
     @tree.command(name="trades", description="Ask the advisor for realistic trade ideas (advice only, nothing is sent)")
     async def trades(interaction: discord.Interaction) -> None:

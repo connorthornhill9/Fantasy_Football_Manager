@@ -86,6 +86,7 @@ class LeagueContext:
     injuries: dict[str, InjuryNote] = field(default_factory=dict)
     headlines: dict[str, list[NewsItem]] = field(default_factory=dict)
     locked: dict[str, str] = field(default_factory=dict)
+    waiver_history: str | None = None  # e.g. "Wednesday 12:00 (67 claims), Thursday 03:00 (26 claims)"
     built_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # ------------------------------------------------------------------ construction
@@ -173,7 +174,34 @@ class LeagueContext:
         ctx._ingest_recent_stats(recent_raw)
         ctx._compute_free_agents()
         ctx._ingest_news(injury_notes, news_items)
+        ctx.waiver_history = await ctx._learn_waiver_cadence(public)
         return ctx
+
+    async def _learn_waiver_cadence(self, public: SleeperPublic) -> str | None:
+        """When did waiver claims actually process? Learned from this season so far, else last season."""
+        from collections import Counter
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(self.config.timezone) if self.config.timezone else None
+        for league_id in (self.league_id, self.league.get("previous_league_id")):
+            if not league_id:
+                continue
+            try:
+                txs = await public.get_season_transactions(str(league_id))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not read transactions for %s: %s", league_id, exc)
+                continue
+            counter: Counter[str] = Counter()
+            for t in txs:
+                if t.get("type") == "waiver" and t.get("status") == "complete":
+                    ts = datetime.fromtimestamp(int(t.get("status_updated") or t.get("created") or 0) / 1000, tz=tz or timezone.utc)
+                    counter[ts.strftime("%A %H:00")] += 1
+            this_season = str(league_id) == self.league_id
+            if counter and (sum(counter.values()) >= 10 or not this_season):
+                top = counter.most_common(3)
+                label = "this season" if this_season else "last season"
+                return ", ".join(f"{when} ({n} claims)" for when, n in top) + f" [{label}, {self.config.timezone or 'UTC'}]"
+        return None
 
     @staticmethod
     def _used_positions(league: dict) -> set[str]:
@@ -490,6 +518,32 @@ class LeagueContext:
             lines.append(f"| {slot} | {name_opt} | {_pts(self.proj_pts(opt) if opt != EMPTY_SLOT else None)} | {name_cur} | {_pts(self.proj_pts(cur) if cur != EMPTY_SLOT else None)} | {mark} |")
         lines.append(f"\nOptimal total {total:.1f} vs current {cur_total:.1f} ({total - cur_total:+.1f}). "
                      + ("Players marked Out/Doubtful/IR/suspended are excluded from the optimal lineup." if changed else "The current lineup is already optimal by projection."))
+        return "\n".join(lines)
+
+    def lineup_changes(self) -> tuple[list[str], list[str], float]:
+        """(players to start, players to sit, projected gain) to go from the current lineup to the optimal one."""
+        current = [str(s) for s in (self.my_roster.get("starters") or []) if str(s) != EMPTY_SLOT]
+        optimal, total = self.optimal_starters()
+        opt = [s for s in optimal if s != EMPTY_SLOT]
+        starts = [pid for pid in opt if pid not in current]
+        sits = [pid for pid in current if pid not in opt]
+        gain = total - team_distribution(self.lineup_pairs(current))[0]
+        return starts, sits, round(gain, 1)
+
+    def optimal_lineup_compact(self, width: int = 22) -> str:
+        """Narrow fixed-width listing of the optimal lineup, sized to fit a Discord code block."""
+        optimal, total = self.optimal_starters()
+        current = {str(s) for s in (self.my_roster.get("starters") or [])}
+        lines = []
+        for slot, pid in zip(self.starter_slots, optimal):
+            if pid == EMPTY_SLOT:
+                lines.append(f"{slot:<5} {'(empty)':<{width}}    -")
+                continue
+            name = self.players.name(pid)
+            name = name if len(name) <= width else name[: width - 1] + "…"
+            mark = "" if pid in current else " *"
+            lines.append(f"{slot:<5} {name:<{width}} {_pts(self.proj_pts(pid)):>5}{mark}")
+        lines.append(f"{'Total':<5} {'':<{width}} {total:>5.1f}")
         return "\n".join(lines)
 
     def matchup_summary_markdown(self) -> str:
@@ -862,6 +916,29 @@ class LeagueContext:
                 entries.append(text)
         return "\n".join(entries) if entries else "(no injury flags among players of interest)"
 
+    def waiver_rules_text(self) -> str:
+        s = self.settings
+        my = self.my_roster.get("settings") or {}
+        parts = [f"Waivers: {self.waiver_type}"]
+        if self.uses_faab:
+            parts.append(f"FAAB budget ${self.faab_budget}, I have ${self.faab_remaining} left")
+        else:
+            parts.append(
+                f"my waiver priority is {my.get('waiver_position', '?')} of {self.league.get('total_rosters')}"
+                + ("; winning a claim sends me to the bottom of the priority list" if int(s.get("waiver_type", 0) or 0) == 0 else "")
+            )
+        if s.get("daily_waivers"):
+            hour = s.get("daily_waivers_hour")
+            parts.append(f"waivers run on league-selected days at {hour}:00 Pacific" if hour is not None else "waivers run daily on league-selected days")
+        parts.append(f"dropped players clear waivers after {s.get('waiver_clear_days', '?')} day(s)")
+        if self.waiver_history:
+            parts.append(f"claims actually processed at: {self.waiver_history}")
+        parts.append(
+            "in-season a player goes on waivers once his game kicks off and stays there until the next waiver run, "
+            "so early in the week most useful players need a waiver_claim; direct adds work once waivers have run"
+        )
+        return "; ".join(parts) + "."
+
     def rules_markdown(self) -> str:
         s = self.settings
         my = self.my_roster.get("settings") or {}
@@ -874,9 +951,7 @@ class LeagueContext:
             f"All scoring rules: {full_scoring_markdown(self.scoring)}",
             f"Starting slots (in order): {', '.join(self.starter_slots)}",
             f"Bench slots: {self.roster_positions.count('BN')}, IR slots: {s.get('reserve_slots', 0)}, taxi slots: {s.get('taxi_slots', 0)}, active roster limit: {self.active_roster_limit}",
-            f"Waivers: {self.waiver_type}"
-            + (f"; FAAB budget ${self.faab_budget}, I have ${self.faab_remaining} left" if self.uses_faab else f"; my waiver priority: {my.get('waiver_position', '?')}")
-            + f"; dropped players clear waivers after {s.get('waiver_clear_days', '?')} day(s)",
+            self.waiver_rules_text(),
             f"Trade deadline: {'none' if deadline >= 99 else f'week {deadline}'}; playoffs start week {s.get('playoff_week_start', '?')}",
             f"My team: {self.owner_name(self.my_roster)} (roster id {self.my_roster_id}), record {record}, points for {float(my.get('fpts', 0)):.1f}",
             f"LOCKED players (the manager forbids dropping or trading these; you may still start/bench them and may say what you would do if they were unlocked): {locked}",

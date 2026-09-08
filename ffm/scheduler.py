@@ -18,7 +18,6 @@ JOBS = (
     ("weekly_waivers", "weekly_waivers", "Waiver-day review", "analysis_cron"),
     ("lineup", "lineup", "Pre-game lineup check", "lineup_cron"),
     ("late_news", "lineup", "Late-week injury check", "news_cron"),
-    ("trades", "trades", "Trade ideas", "trade_cron"),
 )
 
 

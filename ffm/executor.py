@@ -42,8 +42,25 @@ class Executor:
             log.info("DRY RUN: %s", plan)
             return ExecutionResult(ok=True, message=f"[DRY RUN] would call {plan}", dry_run=True)
         assert self.auth is not None
+        executed = proposal
+        note = ""
         try:
-            raw = await self._dispatch(proposal, target)
+            try:
+                raw = await self._dispatch(proposal, target)
+            except SleeperAuthError as exc:
+                alternate = self._alternate(proposal, exc)
+                if alternate is None:
+                    raise
+                # Sleeper decides whether a player is a free agent or on waivers; retry the other way.
+                log.info("Sleeper said %r; retrying as %s", str(exc), alternate.kind)
+                executed = alternate
+                plan = self.describe_call(alternate, target)
+                raw = await self._dispatch(alternate, target)
+                note = (
+                    " Submitted as a waiver claim instead (the player is on waivers; it processes at the next waiver run)."
+                    if alternate.kind == "waiver_claim"
+                    else " Added directly instead (the player was a free agent, not on waivers)."
+                )
         except SleeperAuthError as exc:
             log.warning("Sleeper rejected %s: %s", plan, exc)
             return ExecutionResult(ok=False, message=str(exc))
@@ -52,12 +69,22 @@ class Executor:
         status = (raw or {}).get("status")
         tx = (raw or {}).get("transaction_id")
         detail = f" (status: {status}, transaction {tx})" if status or tx else ""
-        problem = await self.verify(proposal, target)
+        problem = await self.verify(executed, target)
         if problem:
             log.warning("Post-check after %s: %s", plan, problem)
             return ExecutionResult(ok=False, message=f"Sleeper accepted the request{detail} but the roster does not show it: {problem}", raw=raw)
-        verified = " Verified on the roster." if self.public and self._verifiable(proposal) else ""
-        return ExecutionResult(ok=True, message=f"Done: {plan}{detail}.{verified}", raw=raw)
+        verified = " Verified on the roster." if self.public and self._verifiable(executed) else ""
+        return ExecutionResult(ok=True, message=f"Done: {plan}{detail}.{note}{verified}", raw=raw)
+
+    @staticmethod
+    def _alternate(p: Proposal, exc: SleeperAuthError) -> Proposal | None:
+        """If Sleeper rejected an add because the player is on waivers (or a claim because he is not), the other kind."""
+        text = str(exc).lower()
+        if p.kind in ("add", "add_drop") and p.adds and "waiver" in text:
+            return p.model_copy(update={"kind": "waiver_claim", "faab_bid": p.faab_bid or 0})
+        if p.kind == "waiver_claim" and ("free agent" in text or "not on waivers" in text):
+            return p.model_copy(update={"kind": "add_drop" if p.drops else "add"})
+        return None
 
     @staticmethod
     def _verifiable(p: Proposal) -> bool:

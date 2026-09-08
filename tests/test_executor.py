@@ -102,6 +102,36 @@ def test_dry_run_flag_overrides_auth():
 
 
 def test_sleeper_error_is_reported_not_raised():
-    p = Proposal(kind="add", adds=["100"], rationale="r")
+    p = Proposal(kind="drop", drops=["100"], rationale="r")
     result = run(Executor(FakeAuth(fail=True)).execute(p, TARGET))
     assert not result.ok and "waivers" in result.message
+
+
+class WaiverAwareAuth(FakeAuth):
+    """Rejects direct adds for player 'W' (on waivers) and claims for player 'F' (a free agent)."""
+
+    async def add_drop(self, league_id, roster_id, adds, drops):
+        if "W" in adds:
+            raise SleeperAuthError("player is currently on waivers")
+        return await super().add_drop(league_id, roster_id, adds, drops)
+
+    async def waiver_claim(self, league_id, roster_id, adds, drops, faab_bid=0):
+        if "F" in adds:
+            raise SleeperAuthError("player is a free agent and not on waivers")
+        return await super().waiver_claim(league_id, roster_id, adds, drops, faab_bid)
+
+
+def test_add_falls_back_to_waiver_claim():
+    auth = WaiverAwareAuth()
+    p = Proposal(kind="add_drop", adds=["W"], drops=["2"], rationale="r")
+    result = run(Executor(auth).execute(p, TARGET))
+    assert result.ok and "waiver claim instead" in result.message
+    assert auth.calls[-1][0] == "waiver_claim" and auth.calls[-1][2]["drops"] == ["2"]
+
+
+def test_claim_falls_back_to_direct_add():
+    auth = WaiverAwareAuth()
+    p = Proposal(kind="waiver_claim", adds=["F"], drops=[], faab_bid=0, rationale="r")
+    result = run(Executor(auth).execute(p, TARGET))
+    assert result.ok and "Added directly" in result.message
+    assert auth.calls[-1][0] == "add_drop"
