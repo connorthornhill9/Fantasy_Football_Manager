@@ -10,5 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ffm ./ffm
 
-VOLUME ["/app/data"]
+# Persistent data (SQLite + player cache) lives in /app/data: mount a volume there
+# (docker-compose does; on Railway attach a volume at /app/data in the dashboard).
 CMD ["python", "-m", "ffm", "run"]
