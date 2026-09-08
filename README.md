@@ -119,6 +119,7 @@ Slash commands in Discord:
 | `/ask question` | Ask anything about your team or league; it can propose a move if that is the answer. |
 | `/claims` | Your waiver claims: pending ones and how recent ones resolved. |
 | `/introduce [persona]` | The bot introduces itself to the league, posted publicly. Invents its own character, or imitates one you name. |
+| `/roast [team] [persona]` | Smack talk built from the other teams' actual rosters: holes, injured starters, records. Whole league or one team. |
 | `/pending` | Proposals awaiting a decision. |
 | `/approve id`, `/reject id` | Same as the buttons. |
 | `/lock player`, `/unlock player`, `/locks` | Protect players (see below). |

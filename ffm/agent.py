@@ -194,6 +194,52 @@ class Advisor:
         )
         return "".join(b.text for b in response.content if b.type == "text").strip() or "(no introduction produced)"
 
+    async def roast(self, target: str | None = None, persona: str | None = None) -> str:
+        """Smack talk about the other teams (or one team), built from their actual rosters. One cheap model call."""
+        ctx = await self.build_context()
+        others = [r for r in ctx.rosters if int(r["roster_id"]) != ctx.my_roster_id]
+        if target:
+            q = target.lower()
+            others = [r for r in others if q in ctx.owner_name(r).lower() or q == str(r["roster_id"])]
+            if not others:
+                names = ", ".join(ctx.owner_name(r) for r in ctx.rosters if int(r["roster_id"]) != ctx.my_roster_id)
+                return f"No team matches '{target}'. Teams: {names}"
+        needs = "\n".join(line for line in ctx.team_needs_markdown().splitlines() if "(me)" not in line)
+        cards = []
+        for r in others:
+            s = r.get("settings") or {}
+            sections = ctx.roster_sections(r)
+            starters = [ctx.players.name(p) for _, p in sections["starters"] if p != "0"]
+            hurt = [f"{ctx.players.name(p)} ({ctx.players.injury(p)})" for _, p in sections["starters"] if p != "0" and ctx.players.injury(p)]
+            cards.append(
+                f"- {ctx.owner_name(r)} (roster id {r['roster_id']}): record {s.get('wins', 0)}-{s.get('losses', 0)}, "
+                f"waiver priority {s.get('waiver_position', '?')}; starters: {', '.join(starters)}; "
+                f"injured starters: {', '.join(hurt) or 'none'}"
+            )
+        style = (
+            f"Speak as {persona} (a loving parody of their style, clearly a tribute)."
+            if persona
+            else "Speak as the team's cocky AI general manager."
+        )
+        scope = "one paragraph per team, every team listed, in a random order" if len(others) > 1 else "one short, devastating paragraph"
+        prompt = (
+            f"You manage the fantasy football team {ctx.owner_name(ctx.my_roster)} in the league '{ctx.league_name}'. "
+            f"Write smack talk about the OTHER teams for the league's Discord: {scope}. Never roast or mention weaknesses of "
+            f"my own team ({ctx.owner_name(ctx.my_roster)}); I am the one talking. Roast the TEAMS, never the people: "
+            "their positional holes, injured starters, record, waiver spot, thin benches, questionable starters. Use the "
+            "positional-strength table and the team cards below for real material, and name at least one actual player per "
+            "team. Keep it PG-13, witty rather than cruel, no slurs, nothing about anyone's personal life. Bold each team "
+            f"name. Discord-friendly, no headers or tables. {'Under 1800 characters total.' if len(others) > 1 else 'Under 600 characters.'} {style}\n\n"
+            f"Positional strength (percent of league average):\n{needs}\n\nTeam cards:\n" + "\n".join(cards)
+        )
+        response = await self.client.messages.create(
+            model=self.config.model,
+            max_tokens=1200,
+            output_config={"effort": "low"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(b.text for b in response.content if b.type == "text").strip() or "(nothing to say, which never happens)"
+
     async def run(self, trigger: str, focus: str | None = None, allow_proposals: bool = True) -> RunResult:
         ctx = await self.build_context()
         run_id = self.store.create_run(trigger, focus)

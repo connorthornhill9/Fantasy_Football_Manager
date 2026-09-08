@@ -440,6 +440,23 @@ def register_commands(bot: FFMBot) -> None:
             return
         await interaction.followup.send(text[:1990])
 
+    @tree.command(name="roast", description="Smack talk the other teams from their actual rosters (posted publicly)")
+    @app_commands.describe(team="Optional: one team name to roast; leave blank for the whole league", persona="Optional personality to imitate")
+    async def roast(interaction: discord.Interaction, team: str | None = None, persona: str | None = None) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.defer(thinking=True)
+        try:
+            text = await bot.app.advisor.roast(team, persona)
+        except Exception as exc:  # noqa: BLE001
+            await interaction.followup.send(f"Could not write a roast: {exc}", ephemeral=True)
+            return
+        first, rest = text[:1990], text[1990:]
+        await interaction.followup.send(first)
+        while rest:  # Discord caps a message at 2000 characters
+            chunk, rest = rest[:1990], rest[1990:]
+            await interaction.followup.send(chunk)
+
     @tree.command(name="sweep", description="Quick free-agent sweep: direct adds worth making today (no claims, no lineup)")
     async def sweep(interaction: discord.Interaction) -> None:
         if not owner_only(interaction):
