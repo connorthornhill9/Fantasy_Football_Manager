@@ -196,17 +196,52 @@ class SleeperAuth:
 
     # ------------------------------------------------------------------ lineup / roster slots
 
-    async def set_starters(self, league_id: str, roster_id: int, starters: list[str]) -> dict:
-        """Set the starters list. Order must match the league's roster_positions (excluding BN/IR/TAXI)."""
-        query = f"""
+    async def set_starters(self, league_id: str, roster_id: int, starters: list[str], week: int) -> dict:
+        """Set the starters for a week. Order must match the league's roster_positions (excluding BN/IR/TAXI).
+
+        In-season lineups live on the week's matchup leg (that is what sleeper.com shows), so this updates
+        the leg for `week` and then the roster's default starters for later weeks.
+        """
+        leg_query = """
+        mutation update_matchup_leg($league_id: Snowflake!, $roster_id: Int!, $round: Int!, $leg: Int!, $starters: [String]) {
+          update_matchup_leg(league_id: $league_id, roster_id: $roster_id, round: $round, leg: $leg, starters: $starters) {
+            round leg roster_id starters
+          }
+        }
+        """
+        data = await self.gql(
+            "update_matchup_leg",
+            leg_query,
+            {"league_id": league_id, "roster_id": roster_id, "round": week, "leg": week, "starters": starters},
+        )
+        result = data.get("update_matchup_leg") or {}
+        default_query = f"""
         mutation roster_update_starters($league_id: Snowflake!, $roster_id: Int!, $starters: [String]) {{
           roster_update_starters(league_id: $league_id, roster_id: $roster_id, starters: $starters) {{ {ROSTER_FIELDS} }}
         }}
         """
+        try:
+            await self.gql("roster_update_starters", default_query, {"league_id": league_id, "roster_id": roster_id, "starters": starters})
+        except SleeperAuthError as exc:  # the week is set; the default is a courtesy
+            log.warning("roster_update_starters failed after update_matchup_leg succeeded: %s", exc)
+        return result
+
+    async def get_matchup_leg(self, league_id: str, roster_id: int, week: int) -> dict | None:
+        """The roster's matchup leg for a week: live starters, players and points."""
+        query = """
+        query matchup_legs_related_to_roster($league_id: Snowflake!, $roster_id: Int!, $s: Int!, $e: Int!) {
+          matchup_legs_related_to_roster(league_id: $league_id, roster_id: $roster_id, start_round: $s, end_round: $e) {
+            round leg roster_id matchup_id starters players points proj_points
+          }
+        }
+        """
         data = await self.gql(
-            "roster_update_starters", query, {"league_id": league_id, "roster_id": roster_id, "starters": starters}
+            "matchup_legs_related_to_roster",
+            query,
+            {"league_id": league_id, "roster_id": roster_id, "s": week, "e": week},
         )
-        return data.get("roster_update_starters") or {}
+        legs = data.get("matchup_legs_related_to_roster") or []
+        return next((leg for leg in legs if leg.get("roster_id") == roster_id and leg.get("round") == week), None)
 
     async def set_reserve(self, league_id: str, roster_id: int, reserve: list[str]) -> dict:
         """Replace the full injured-reserve list."""

@@ -164,6 +164,16 @@ class LeagueContext:
         )
         if not my_roster:
             raise ConfigError(f"{config.sleeper_username} does not own a roster in league {league['name']}")
+        if auth is not None:
+            # This week's starters live on the matchup leg (what sleeper.com shows), not the roster default.
+            try:
+                leg = await auth.get_matchup_leg(league_id, int(my_roster["roster_id"]), int(state.get("leg") or week))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not read this week's matchup leg: %s", exc)
+                leg = None
+            if leg and leg.get("starters"):
+                my_roster = dict(my_roster, starters=[str(s) for s in leg["starters"]])
+                rosters = [my_roster if r is not my_roster and int(r["roster_id"]) == int(my_roster["roster_id"]) else r for r in rosters]
 
         ctx = cls(
             config=config,

@@ -100,17 +100,33 @@ class Executor:
         problem: str | None = "roster could not be read"
         for attempt in range(attempts):
             try:
-                rosters = await self._fresh_rosters(t.league_id)
+                if p.kind == "lineup":
+                    mine = await self._fresh_lineup(t)
+                else:
+                    rosters = await self._fresh_rosters(t.league_id)
+                    mine = next((r for r in rosters if int(r.get("roster_id", -1)) == t.roster_id), None)
             except (SleeperAPIError, SleeperAuthError) as exc:
                 problem = f"roster could not be read ({exc})"
             else:
-                mine = next((r for r in rosters if int(r.get("roster_id", -1)) == t.roster_id), None)
                 problem = self._check_roster(p, mine) if mine else "my roster was not found"
             if problem is None:
                 return None
             if attempt < attempts - 1 and self.verify_delay > 0:
                 await asyncio.sleep(self.verify_delay * (attempt + 1))
         return problem
+
+    async def _fresh_lineup(self, t: ExecTarget) -> dict | None:
+        """This week's starters as sleeper.com shows them: the matchup leg (live), else the public matchups feed."""
+        getter = getattr(self.auth, "get_matchup_leg", None)
+        if getter is not None and t.leg is not None:
+            leg = await getter(t.league_id, t.roster_id, t.leg)
+            if leg is not None:
+                return leg
+        if self.public is not None and t.leg is not None:
+            matchups = await self.public.get_matchups(t.league_id, t.leg)
+            return next((m for m in matchups if int(m.get("roster_id", -1)) == t.roster_id), None)
+        rosters = await self._fresh_rosters(t.league_id)
+        return next((r for r in rosters if int(r.get("roster_id", -1)) == t.roster_id), None)
 
     async def _fresh_rosters(self, league_id: str) -> list[dict]:
         """Authenticated GraphQL read when available (not cached); otherwise the public API."""
@@ -184,7 +200,9 @@ class Executor:
         if p.kind == "lineup":
             if not p.starters:
                 raise ValueError("lineup proposal has no starters")
-            return await auth.set_starters(t.league_id, t.roster_id, [str(s) for s in p.starters])
+            if t.leg is None:
+                raise ValueError("current week unknown; cannot set a lineup")
+            return await auth.set_starters(t.league_id, t.roster_id, [str(s) for s in p.starters], week=t.leg)
         if p.kind in ("ir", "activate_ir"):
             roster = await self._my_roster(t)
             reserve = [str(x) for x in (roster.get("reserve") or [])]

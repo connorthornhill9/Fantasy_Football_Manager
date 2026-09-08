@@ -24,8 +24,8 @@ class FakeAuth:
     async def waiver_claim(self, league_id, roster_id, adds, drops, faab_bid=None):
         return await self._record("waiver_claim", league_id, roster_id, adds=adds, drops=drops, faab_bid=faab_bid)
 
-    async def set_starters(self, league_id, roster_id, starters):
-        return await self._record("set_starters", league_id, roster_id, starters=starters)
+    async def set_starters(self, league_id, roster_id, starters, week):
+        return await self._record("set_starters", league_id, roster_id, starters=starters, week=week)
 
     async def set_reserve(self, league_id, roster_id, reserve):
         return await self._record("set_reserve", league_id, roster_id, reserve=reserve)
@@ -68,11 +68,21 @@ def test_waiver_claim_passes_bid():
     assert auth.calls[0][2]["faab_bid"] == 17
 
 
-def test_lineup_sets_starters():
+def test_lineup_sets_starters_for_the_week():
     auth = FakeAuth()
     p = Proposal(kind="lineup", starters=["1", "2", "0"], rationale="r")
     run(Executor(auth).execute(p, TARGET))
-    assert auth.calls[0] == ("set_starters", ("L1", 4), {"starters": ["1", "2", "0"]})
+    assert auth.calls[0] == ("set_starters", ("L1", 4), {"starters": ["1", "2", "0"], "week": 7})
+
+
+def test_lineup_verification_reads_the_matchup_leg():
+    class LegAuth(FakeAuth):
+        async def get_matchup_leg(self, league_id, roster_id, week):
+            return {"roster_id": roster_id, "round": week, "starters": ["1", "2", "0"]}
+
+    p = Proposal(kind="lineup", starters=["1", "2", "0"], rationale="r")
+    result = run(Executor(LegAuth(), public=FakePublic(), verify_delay=0).execute(p, TARGET))
+    assert result.ok and "Verified" in result.message
 
 
 def test_ir_taxi_activate_send_full_lists():
