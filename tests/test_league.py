@@ -170,6 +170,21 @@ def test_lineup_validation():
     assert any("not eligible for the DL" in e for e in errs) and any("not eligible for the DB" in e for e in errs)
 
 
+def test_ir_eligibility_follows_league_flags():
+    ctx = make_ctx()
+    assert ctx.ir_eligible_statuses() == {"IR", "PUP", "NFI"}
+    ctx.players.get("2")["injury_status"] = "NA"
+    assert any("injury status 'NA'" in e for e in errors(ctx, kind="ir", drops=["2"]))
+    ctx.league["settings"]["reserve_allow_na"] = 1
+    assert "NA" in ctx.ir_eligible_statuses()
+    ctx.my_roster["reserve"] = []  # free the single IR slot for this check
+    assert errors(ctx, kind="ir", drops=["2"]) == []
+    ctx.my_roster["reserve"] = ["10"]
+    assert any("IR slots are already used" in e for e in errors(ctx, kind="ir", drops=["2"]))
+    del ctx.league["settings"]["reserve_allow_na"]
+    del ctx.players.get("2")["injury_status"]
+
+
 def test_ir_and_trade_validation():
     ctx = make_ctx()
     assert any("injury status" in e for e in errors(ctx, kind="ir", drops=["2"]))

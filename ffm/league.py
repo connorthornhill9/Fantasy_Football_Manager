@@ -20,7 +20,16 @@ log = logging.getLogger(__name__)
 
 WAIVER_TYPES = {0: "rolling waiver priority", 1: "reverse standings priority", 2: "FAAB bidding"}
 LEAGUE_TYPES = {0: "redraft", 1: "keeper", 2: "dynasty"}
-IR_ELIGIBLE_ALWAYS = {"IR", "PUP", "NFI", "Sus", "COV", "NA"}
+IR_ELIGIBLE_ALWAYS = {"IR", "PUP", "NFI"}
+# Sleeper league setting -> injury status it unlocks for the IR slot
+IR_OPTIONAL_STATUSES = {
+    "reserve_allow_out": "Out",
+    "reserve_allow_doubtful": "Doubtful",
+    "reserve_allow_sus": "Sus",
+    "reserve_allow_cov": "COV",
+    "reserve_allow_na": "NA",
+    "reserve_allow_dnr": "DNR",
+}
 FA_LIMITS = {"QB": 5, "RB": 10, "WR": 10, "TE": 6, "K": 3, "DEF": 3, "DL": 8, "LB": 8, "DB": 8}
 SEASON_GAMES = 17
 
@@ -816,15 +825,14 @@ class LeagueContext:
                 elif p.kind == "ir":
                     if int(self.settings.get("reserve_slots") or 0) <= 0:
                         errors.append("this league has no IR slots")
+                    reserve = {str(x) for x in (self.my_roster.get("reserve") or [])}
+                    if len(reserve) >= int(self.settings.get("reserve_slots") or 0):
+                        errors.append("all IR slots are already used")
                     status = (self.players.get(pid) or {}).get("injury_status") or ""
-                    allowed = set(IR_ELIGIBLE_ALWAYS)
-                    if self.settings.get("reserve_allow_out"):
-                        allowed.add("Out")
-                    if self.settings.get("reserve_allow_doubtful"):
-                        allowed.add("Doubtful")
+                    allowed = self.ir_eligible_statuses()
                     if status not in allowed:
                         errors.append(
-                            f"{self.players.name(pid)} has injury status {status or 'none'!r}; IR-eligible statuses here: {sorted(allowed)}"
+                            f"{self.players.name(pid)} has injury status {status or 'none'!r}; IR-eligible statuses in this league: {sorted(allowed)}"
                         )
                 elif int(self.settings.get("taxi_slots") or 0) <= 0:
                     errors.append("this league has no taxi squad")
@@ -1022,6 +1030,13 @@ class LeagueContext:
                 entries.append(text)
         return "\n".join(entries) if entries else "(no injury flags among players of interest)"
 
+    def ir_eligible_statuses(self) -> set[str]:
+        allowed = set(IR_ELIGIBLE_ALWAYS)
+        for setting, status in IR_OPTIONAL_STATUSES.items():
+            if self.settings.get(setting):
+                allowed.add(status)
+        return allowed
+
     def waiver_rules_text(self) -> str:
         s = self.settings
         my = self.my_roster.get("settings") or {}
@@ -1056,7 +1071,7 @@ class LeagueContext:
             f"Scoring summary: {describe_scoring(self.scoring)}",
             f"All scoring rules: {full_scoring_markdown(self.scoring)}",
             f"Starting slots (in order): {', '.join(self.starter_slots)}",
-            f"Bench slots: {self.roster_positions.count('BN')}, IR slots: {s.get('reserve_slots', 0)}, taxi slots: {s.get('taxi_slots', 0)}, active roster limit: {self.active_roster_limit}",
+            f"Bench slots: {self.roster_positions.count('BN')}, IR slots: {s.get('reserve_slots', 0)} (Sleeper statuses allowed on IR here: {', '.join(sorted(self.ir_eligible_statuses()))}; note 'NA' = Commissioner's Exempt / not active, 'Sus' = suspended), taxi slots: {s.get('taxi_slots', 0)}, active roster limit: {self.active_roster_limit}",
             self.waiver_rules_text(),
             f"Trade deadline: {'none' if deadline >= 99 else f'week {deadline}'}; playoffs start week {s.get('playoff_week_start', '?')}",
             f"My team: {self.owner_name(self.my_roster)} (roster id {self.my_roster_id}), record {record}, points for {float(my.get('fpts', 0)):.1f}",
