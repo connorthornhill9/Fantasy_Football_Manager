@@ -54,7 +54,7 @@ Check it:
 
 ```bash
 .venv\Scripts\python -m ffm whoami
-.venv\Scripts\python -m ffm roster
+.venv\Scripts\python -m ffm matchup
 ```
 
 ### 2. Claude
