@@ -20,7 +20,9 @@ on Sleeper through the same GraphQL API the Sleeper web app uses.
 - `ffm/executor.py` – maps an approved `Proposal` onto Sleeper mutations; dry-run support.
 - `ffm/discord_bot.py` – discord.py bot: proposal embeds with persistent buttons, slash commands.
 - `ffm/scheduler.py` – APScheduler cron jobs (waiver day, lineup check).
-- `ffm/__main__.py` – CLI: `run`, `analyze`, `ask`, `roster`, `whoami`, `pending`, `execute`, `reject`.
+- `ffm/__main__.py` – CLI: `run`, `analyze [--trigger weekly_waivers|lineup|trades] [--post]`, `ask`, `matchup`, `snapshot`, `claims`, `whoami`, `pending`, `execute`, `reject`, `lock`/`unlock`/`locks`.
+
+Command roles (keep them separate): `/analyze` = roster moves on three horizons, never a lineup; `/lineup` = this week's starters only, never an add; `/matchup` = computed numbers, no model; `/trades` = advice only; `/claims` = waiver claim status.
 
 ## Commands
 

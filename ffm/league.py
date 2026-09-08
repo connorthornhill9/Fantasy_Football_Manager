@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from .config import Config, ConfigError
 from .lineup import UNAVAILABLE_STATUSES, Candidate, optimal_lineup, team_distribution, win_probability
-from .news import ESPNNews, InjuryNote, NewsItem, match_injuries, match_news
+from .news import ESPNNews, Game, InjuryNote, NewsItem, ProjectionRow, match_injuries, match_news, match_projections
 from .players import EMPTY_SLOT, NON_STARTING_SLOTS, PlayerDB, eligible_positions, slot_allows, slot_positions
 from .proposals import Proposal
 from .scoring import describe_scoring, full_scoring_markdown, score_stats
@@ -41,6 +41,7 @@ class PlayerLine:
     opp: str
     injury: str
     proj: float | None
+    espn: float | None
     ros: float | None
     recent: list[float]
     trend_add: int
@@ -56,7 +57,7 @@ class PlayerLine:
         cells: list[str] = []
         if slot is not None:
             cells.append(slot)
-        cells += [f"{self.name} [{self.pid}]", self.pos, self.team, self.opp, self.injury or "", _pts(self.proj)]
+        cells += [f"{self.name} [{self.pid}]", self.pos, self.team, self.opp, self.injury or "", _pts(self.proj), _pts(self.espn)]
         if with_delta:
             cells.append(f"{_delta(self.delta)} ({self.delta_slot})" if self.delta is not None else "-")
         cells += [_pts(self.ros), _pts(self.recent_avg)]
@@ -85,6 +86,8 @@ class LeagueContext:
     free_agent_ids: list[str] = field(default_factory=list)
     injuries: dict[str, InjuryNote] = field(default_factory=dict)
     headlines: dict[str, list[NewsItem]] = field(default_factory=dict)
+    games: dict[str, Game] = field(default_factory=dict)  # team abbreviation -> this week's game
+    espn_proj: dict[str, float] = field(default_factory=dict)  # pid -> ESPN projection under league scoring
     locked: dict[str, str] = field(default_factory=dict)
     waiver_history: str | None = None  # e.g. "Wednesday 12:00 (67 claims), Thursday 03:00 (26 claims)"
     built_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -128,7 +131,7 @@ class LeagueContext:
         try:
             (
                 rosters, users, players_raw, trending_add, trending_drop, projections, season_rows, matchups,
-                recent_raw, tx_raw, injury_notes, news_items,
+                recent_raw, tx_raw, injury_notes, news_items, games, espn_rows,
             ) = await asyncio.gather(
                 public.get_rosters(league_id),
                 public.get_league_users(league_id),
@@ -142,6 +145,8 @@ class LeagueContext:
                 asyncio.gather(*(public.get_transactions(league_id, w) for w in tx_weeks)),
                 espn.injuries() if espn else _empty(),
                 espn.news() if espn else _empty(),
+                espn.scoreboard() if espn else _empty(),
+                espn.projections(season, week) if espn else _empty(),
             )
         finally:
             if espn:
@@ -172,10 +177,38 @@ class LeagueContext:
         ctx._ingest_projections(projections)
         ctx._ingest_season(season_rows)
         ctx._ingest_recent_stats(recent_raw)
+        ctx._ingest_games(games)
         ctx._compute_free_agents()
         ctx._ingest_news(injury_notes, news_items)
+        ctx._ingest_espn_projections(espn_rows)
         ctx.waiver_history = await ctx._learn_waiver_cadence(public)
         return ctx
+
+    def _ingest_games(self, games: list[Game]) -> None:
+        for g in games:
+            self.games[g.home] = g
+            self.games[g.away] = g
+            if g.home not in self.team_opponents:
+                self.team_opponents[g.home] = g.away
+            if g.away not in self.team_opponents:
+                self.team_opponents[g.away] = g.home
+
+    def _ingest_espn_projections(self, rows: list[ProjectionRow]) -> None:
+        if not rows:
+            return
+        candidates = self.rostered_player_ids() | set(self.free_agent_ids)
+        matched = match_projections(rows, self.players, candidates)
+        scoring = self.scoring
+        for pid, stats in matched.items():
+            self.espn_proj[pid] = score_stats(stats, scoring) if scoring else 0.0
+
+    def game_for(self, player_id: str) -> Game | None:
+        team = self.players.team(player_id)
+        return self.games.get(team) if team else None
+
+    def game_started(self, player_id: str) -> bool:
+        g = self.game_for(player_id)
+        return bool(g and g.started)
 
     async def _learn_waiver_cadence(self, public: SleeperPublic) -> str | None:
         """When did waiver claims actually process? Learned from this season so far, else last season."""
@@ -436,6 +469,7 @@ class LeagueContext:
             opp=str(opp or "-"),
             injury=self.players.injury(pid),
             proj=(entry or {}).get("pts"),
+            espn=self.espn_proj.get(pid),
             ros=self.season_proj.get(pid),
             recent=self.recent_stats.get(pid, []),
             trend_add=self.trending_add.get(pid, 0),
@@ -546,6 +580,34 @@ class LeagueContext:
         lines.append(f"{'Total':<5} {'':<{width}} {total:>5.1f}")
         return "\n".join(lines)
 
+    def games_markdown(self) -> str:
+        """This week's schedule with kickoff (local time), status and weather; one line per game."""
+        from zoneinfo import ZoneInfo
+
+        seen: set[str] = set()
+        tz = ZoneInfo(self.config.timezone) if self.config.timezone else None
+        lines = []
+        for g in sorted({id(g): g for g in self.games.values()}.values(), key=lambda g: g.kickoff):
+            key = f"{g.away}@{g.home}"
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                dt = datetime.fromisoformat(g.kickoff.replace("Z", "+00:00"))
+                when = dt.astimezone(tz).strftime("%a %b %d %I:%M %p %Z") if tz else dt.strftime("%a %b %d %H:%M UTC")
+            except ValueError:
+                when = g.kickoff
+            status = {"in": " (IN PROGRESS, players locked)", "post": " (FINAL, players locked)"}.get(g.state, "")
+            weather = "dome" if g.indoor else (g.weather or "weather n/a")
+            lines.append(f"- {when}: {g.away} @ {g.home}, {weather}{status}")
+        if not lines:
+            return "(schedule unavailable)"
+        mine = {self.players.team(p) for p in (self.my_roster.get("players") or [])}
+        idle = sorted(t for t in mine if t and t not in self.games)
+        if idle:
+            lines.append(f"- Teams on bye or without a game this week: {', '.join(idle)}")
+        return "\n".join(lines)
+
     def matchup_summary_markdown(self) -> str:
         s = self.matchup_summary()
         if not s.get("opponent"):
@@ -633,6 +695,14 @@ class LeagueContext:
             return errors
         reserve = {str(p) for p in (self.my_roster.get("reserve") or [])}
         taxi = {str(p) for p in (self.my_roster.get("taxi") or [])}
+        current = [str(s) for s in (self.my_roster.get("starters") or [])]
+        for slot, new, old in zip(slots, starters, current + [EMPTY_SLOT] * len(slots)):
+            if str(new) == str(old):
+                continue
+            for pid in (str(new), str(old)):
+                if pid != EMPTY_SLOT and self.game_started(pid):
+                    g = self.game_for(pid)
+                    errors.append(f"{self.players.name(pid)} cannot be moved: his game has started ({g.detail if g else ''})")
         seen: set[str] = set()
         for slot, pid in zip(slots, starters):
             pid = str(pid)
@@ -756,12 +826,12 @@ class LeagueContext:
     # ------------------------------------------------------------------ markdown rendering
 
     ROSTER_HEADER = (
-        "| Slot | Player [id] | Pos | Team | Opp | Injury | Proj wk | Season proj/gm | Recent avg | Adds 24h |\n"
-        "|---|---|---|---|---|---|---|---|---|---|"
+        "| Slot | Player [id] | Pos | Team | Opp | Injury | Proj wk | ESPN wk | Season proj/gm | Recent avg | Adds 24h |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|"
     )
     FA_HEADER = (
-        "| Player [id] | Pos | Team | Opp | Injury | Proj wk | vs my lineup (slot) | Season proj/gm | Recent avg | Adds 24h |\n"
-        "|---|---|---|---|---|---|---|---|---|---|"
+        "| Player [id] | Pos | Team | Opp | Injury | Proj wk | ESPN wk | vs my lineup (slot) | Season proj/gm | Recent avg | Adds 24h |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|"
     )
 
     def roster_markdown(self, roster: dict, include_bench: bool = True) -> str:
@@ -770,7 +840,7 @@ class LeagueContext:
         total = 0.0
         for slot, pid in sections["starters"]:
             if pid == EMPTY_SLOT:
-                lines.append(f"| {slot} | (empty) | | | | | | | | |")
+                lines.append(f"| {slot} | (empty) | | | | | | | | | |")
                 continue
             line = self.player_line(pid)
             total += line.proj or 0.0
@@ -963,7 +1033,8 @@ class LeagueContext:
             "# League and team snapshot",
             self.rules_markdown(),
             "\n## My roster",
-            "Columns: Proj wk = projected points this week under league scoring ('-' = no projected production); "
+            "Columns: Proj wk = Sleeper/Rotowire projection this week under league scoring ('-' = no projected production); "
+            "ESPN wk = ESPN's projection under the same scoring (a second opinion; offense only); "
             "Season proj/gm = preseason full-season projection per game (a rest-of-season value proxy); "
             f"Recent avg = last 3 games played{' (end of last season)' if self.week <= 1 else ''}; Adds 24h = adds across all Sleeper leagues.",
             self.roster_markdown(self.my_roster),
@@ -971,6 +1042,8 @@ class LeagueContext:
             self.optimal_lineup_markdown(),
             "\n## This week's matchup",
             self.matchup_markdown(),
+            "\n## This week's games (kickoff, weather)",
+            self.games_markdown(),
         ]
         if include_team_needs:
             parts += ["\n## Positional strength by team (for trade targeting)", self.team_needs_markdown()]

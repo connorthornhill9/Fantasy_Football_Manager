@@ -39,14 +39,23 @@ How to work:
 
 TASKS = {
     "weekly_waivers": (
-        "It is waiver / free-agent day heading into week {week}. Review my roster against the free-agent pool and "
-        "the injury situation. Propose the adds, drops, waiver claims and IR moves worth making, and if my lineup "
-        "for week {week} should change, propose that too."
+        "Market review heading into week {week}. This run is about the ROSTER, not the lineup: adds, drops, waiver "
+        "claims and IR moves. Think on three horizons and tag each proposal with one: this_week (a hole to fill now), "
+        "short_term (the next 3-4 weeks: byes, injuries, role changes), and season (long-term investments: rising "
+        "roles, stashes whose value is weeks away, handcuffs of my key players). Use season projections, depth charts, "
+        "the injury report, headlines and web search for outlook news. Weigh every add against the drop it costs and "
+        "against the waiver priority or FAAB it spends. Do NOT propose a lineup; if an add should start, say so in "
+        "its rationale."
     ),
     "lineup": (
-        "Games for week {week} are approaching. Check my starting lineup: injuries (Out/Doubtful/Questionable with "
-        "bad news), byes, and any bench player projected clearly higher than a starter in an eligible slot. Propose a "
-        "lineup only if it improves things. Also flag any last-minute free-agent pickup that fixes a hole."
+        "Set my starting lineup for week {week}. This run is about the LINEUP only: no adds or drops. Start from the "
+        "computed optimal lineup, then adjust for what projections miss: injury designations and practice notes, "
+        "suspensions, game-time decisions, weather (wind and heavy rain hurt passing games and kickers; domes do not), "
+        "kickoff timing (a player whose game has started cannot be moved; prefer a healthy earlier-game player over a "
+        "Monday-night question mark only if the projections are close), recent usage trends and the matchup. Propose "
+        "one complete lineup only if it differs from the current one, with one sentence per change explaining why it "
+        "deviates from (or agrees with) the computed optimum. If a slot has no healthy option, say so and point the "
+        "manager to /analyze. End with the projected total and win probability."
     ),
     "trades": (
         "Trade day. Using the positional-strength table, find one to three realistic trades that make my team better "
@@ -315,6 +324,11 @@ class Advisor:
             return header + "\n" + ctx.roster_markdown(roster, include_bench=True)
 
         @beta_async_tool
+        async def week_games() -> str:
+            """This week's NFL schedule: kickoff time, game status (pre/in progress/final), venue and weather for every team."""
+            return ctx.games_markdown()
+
+        @beta_async_tool
         async def recent_transactions(limit: int = 25) -> str:
             """Recent waiver, free-agent and trade activity in the league (last two weeks).
 
@@ -336,11 +350,13 @@ class Advisor:
             i_give: list[str] | None = None,
             i_get: list[str] | None = None,
             expected_gain: str | None = None,
+            horizon: str | None = None,
         ) -> str:
             """Record one concrete roster move for the manager to approve in Discord. Validated immediately; fix and retry on rejection.
 
             Args:
                 kind: One of add, drop, add_drop, waiver_claim, lineup, ir, activate_ir, taxi, trade.
+                horizon: Why now: this_week, short_term (next 3-4 weeks) or season (long-term investment). Required for adds, drops and claims.
                 rationale: Two to four sentences the manager will read: why this move, what it costs, what could go wrong. Cite news sources with dates when news drives the move.
                 confidence: low, medium or high.
                 add_player_ids: Players to add (add, add_drop, waiver_claim), or the single player to activate (activate_ir).
@@ -360,6 +376,10 @@ class Advisor:
                 return f"REJECTED: the limit of {max_proposals} proposals per run is reached. Use withdraw_proposal to swap one out."
             if confidence not in ("low", "medium", "high"):
                 confidence = "medium"
+            if horizon not in (None, "this_week", "short_term", "season"):
+                return "REJECTED: horizon must be this_week, short_term or season."
+            if kind in ("add", "drop", "add_drop", "waiver_claim") and horizon is None:
+                return "REJECTED: give a horizon (this_week, short_term or season) for roster moves."
             proposal = Proposal(
                 kind=kind,  # type: ignore[arg-type]
                 adds=[str(x) for x in (add_player_ids or [])],
@@ -373,6 +393,7 @@ class Advisor:
                 confidence=confidence,  # type: ignore[arg-type]
                 priority=len(recorded) + 1,
                 expected_gain=expected_gain,
+                horizon=horizon,  # type: ignore[arg-type]
             )
             errors = ctx.validate_proposal(proposal)
             if errors:
@@ -394,7 +415,7 @@ class Advisor:
                 return f"Withdrew: {removed.title(players.label)}. {len(recorded)} proposals remain."
             return f"No proposal #{number}."
 
-        tools: list = [search_players, get_player, player_news, team_situation, list_free_agents, get_team, recent_transactions]
+        tools: list = [search_players, get_player, player_news, team_situation, list_free_agents, get_team, week_games, recent_transactions]
         if allow_proposals:
             tools += [propose_move, withdraw_proposal]
         return tools

@@ -19,6 +19,7 @@ KIND_LABELS = {
     "taxi": "Move to taxi squad",
     "trade": "Trade proposal",
 }
+HORIZON_LABELS = {"this_week": "This week", "short_term": "Next 3-4 weeks", "season": "Season-long"}
 
 
 class Proposal(BaseModel):
@@ -34,6 +35,7 @@ class Proposal(BaseModel):
     confidence: Literal["low", "medium", "high"] = "medium"
     priority: int = 1
     expected_gain: str | None = None
+    horizon: Literal["this_week", "short_term", "season"] | None = None
 
     def title(self, names: Callable[[str], str]) -> str:
         """Short one-line title. `names` maps a player id to a display label."""

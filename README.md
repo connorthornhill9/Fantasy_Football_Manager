@@ -119,12 +119,12 @@ Slash commands in Discord:
 
 | Command | What it does |
 |---|---|
-| `/analyze [focus]` | Full review now. Optional focus such as `find me a TE` or `lineup only`. |
-| `/lineup` | Check the starting lineup for this week. |
+| `/analyze [focus]` | Market review: adds, drops, claims, IR and stashes, each tagged this week / next 3-4 weeks / season. Never proposes a lineup. Optional focus such as `find me a TE`. |
+| `/lineup` | This week's lineup only: the computed optimum adjusted for injuries, practice notes, suspensions, kickoff times, weather and trends. Never proposes adds. |
 | `/matchup` | Optimal lineup by projection plus a win-probability estimate. Instant, no AI call. |
 | `/trades` | Realistic trade ideas based on every team's positional strengths. Advice only. |
 | `/ask question` | Ask anything about your team or league; it can propose a move if that is the answer. |
-| `/roster` | Your roster with projections. |
+| `/claims` | Your waiver claims: pending ones and how recent ones resolved. |
 | `/pending` | Proposals awaiting a decision. |
 | `/approve id`, `/reject id` | Same as the buttons. |
 | `/lock player`, `/unlock player`, `/locks` | Protect players (see below). |
@@ -166,12 +166,15 @@ its summary what it would do if you unlocked someone, so you still get the recom
 without the risk. `/unlock` removes the lock; `/locks` lists them. The same commands exist in
 the terminal (`python -m ffm lock <name>`).
 
-### News sources
+### Data sources
 
-- Sleeper's player feed: injury status, body part, depth-chart order.
-- ESPN's public injury report: status plus a written comment per player, and headlines. Used
-  to build the "injury and availability" section of the briefing, including the next men up
-  on the depth chart and who owns them in your league.
+- Sleeper: rosters, league rules, weekly and season projections (Rotowire), trending adds
+  and drops, transactions, injury status and depth-chart order.
+- ESPN's public site API: the injury report with a written comment per player, headlines,
+  and the scoreboard (kickoff times, game status, venue and weather). Game status also drives
+  a lock check: a lineup change involving a player whose game has started is rejected.
+- ESPN's fantasy projections, scored with your league's settings and shown next to Sleeper's
+  as a second opinion (offense only; ESPN does not project IDP in a usable way).
 - Web search by the model, limited to espn.com, nfl.com, nbcsports.com, rotowire.com,
   fantasypros.com, cbssports.com, pff.com and sleeper.com, at most six searches per run.
   (Sites that block Anthropic's crawler, such as The Athletic, cannot be added.) Turn off with `FFM_WEB_SEARCH=false`.

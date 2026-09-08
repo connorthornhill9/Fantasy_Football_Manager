@@ -13,7 +13,7 @@ from discord.ext import commands
 from .agent import RunResult
 from .app import App
 from .players import PlayerDB
-from .proposals import KIND_LABELS
+from .proposals import HORIZON_LABELS, KIND_LABELS
 from .scheduler import build_scheduler, describe_jobs
 from .store import ProposalRecord
 
@@ -30,8 +30,8 @@ STATUS_COLORS = {
     "advice": discord.Color.purple(),
 }
 TRIGGER_TITLES = {
-    "weekly_waivers": "Waiver-day review",
-    "lineup": "Lineup check",
+    "weekly_waivers": "Market review",
+    "lineup": "Lineup",
     "trades": "Trade ideas",
     "manual": "Team review",
     "ask": "Answer",
@@ -51,6 +51,8 @@ def proposal_embed(rec: ProposalRecord, players: PlayerDB, note: str | None = No
     )
     embed.add_field(name="Type", value=KIND_LABELS.get(p.kind, p.kind), inline=True)
     embed.add_field(name="Confidence", value=p.confidence, inline=True)
+    if p.horizon:
+        embed.add_field(name="Horizon", value=HORIZON_LABELS.get(p.horizon, p.horizon), inline=True)
     if p.expected_gain:
         embed.add_field(name="Expected gain", value=p.expected_gain[:200], inline=True)
     if p.kind == "waiver_claim" and p.faab_bid is not None:
@@ -365,6 +367,31 @@ class FFMBot(commands.Bot):
             log.warning("Could not update Discord message for proposal %s: %s", rec.id, exc)
 
 
+async def claims_text(bot: "FFMBot", limit: int = 12) -> str:
+    """Human summary of my waiver claims (pending first, then the most recent outcomes)."""
+    app = bot.app
+    assert app.auth is not None
+    target = await app.advisor.exec_target()
+    players = await bot.players()
+    txs = await app.auth.get_transactions(target.league_id, types=["waiver"], limit=200)
+    mine = [t for t in txs if target.roster_id in (t.get("roster_ids") or [])]
+    if not mine:
+        return "No waiver claims on record for your team."
+    mine.sort(key=lambda t: (t.get("status") != "pending", -(t.get("created") or 0)))
+    lines = []
+    for t in mine[:limit]:
+        adds = ", ".join(players.label(p) for p in (t.get("adds") or {})) or "-"
+        drops = ", ".join(players.label(p) for p in (t.get("drops") or {})) or "-"
+        when = datetime.fromtimestamp(int(t.get("created") or 0) / 1000, tz=timezone.utc).strftime("%b %d")
+        settings = t.get("settings") or {}
+        bid = f", bid ${settings['waiver_bid']}" if settings.get("waiver_bid") is not None else ""
+        note = (t.get("metadata") or {}).get("notes")
+        status = str(t.get("status") or "?")
+        icon = {"pending": "⏳", "complete": "✅", "failed": "❌"}.get(status, "•")
+        lines.append(f"{icon} {when} {status}: add {adds}; drop {drops}{bid}" + (f" — {note}" if note else ""))
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------- slash commands
 
 
@@ -377,7 +404,7 @@ def register_commands(bot: FFMBot) -> None:
     async def deny(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("Only the team owner can use this.", ephemeral=True)
 
-    @tree.command(name="analyze", description="Run a full roster review now and post proposals")
+    @tree.command(name="analyze", description="Market review: adds, drops, claims and stashes for this week and the season")
     @app_commands.describe(focus="Optional instructions, e.g. 'find me a TE' or 'RB depth only'")
     async def analyze(interaction: discord.Interaction, focus: str | None = None) -> None:
         if not owner_only(interaction):
@@ -390,7 +417,7 @@ def register_commands(bot: FFMBot) -> None:
             except discord.HTTPException:
                 pass
 
-    @tree.command(name="lineup", description="Check my starting lineup for this week")
+    @tree.command(name="lineup", description="Set my best lineup for this week: injuries, news, weather, kickoff times")
     async def lineup(interaction: discord.Interaction) -> None:
         if not owner_only(interaction):
             return await deny(interaction)
@@ -423,19 +450,20 @@ def register_commands(bot: FFMBot) -> None:
         await interaction.response.send_message(f"Thinking about: *{question[:200]}*", ephemeral=True)
         await bot.run_analysis("ask", question)
 
-    @tree.command(name="roster", description="Show my roster with this week's projections")
-    async def roster(interaction: discord.Interaction) -> None:
-        await interaction.response.defer(thinking=True)
-        try:
-            ctx = await bot.app.advisor.build_context()
-        except Exception as exc:  # noqa: BLE001
-            await interaction.followup.send(f"Could not load the roster: {exc}")
+    @tree.command(name="claims", description="My waiver claims: pending ones and how recent ones resolved")
+    async def claims(interaction: discord.Interaction) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if bot.app.auth is None:
+            await interaction.followup.send("No Sleeper token is set, so claims cannot be read.", ephemeral=True)
             return
-        bot._players = ctx.players
-        text = ctx.rules_markdown() + "\n\n" + ctx.roster_markdown(ctx.my_roster)
-        text = re.sub(r" \[\d+\]", "", text)  # hide player ids for humans
-        embed = discord.Embed(title=f"{ctx.owner_name(ctx.my_roster)} — week {ctx.week}", description=f"```\n{text[:3900]}\n```")
-        await interaction.followup.send(embed=embed)
+        try:
+            text = await claims_text(bot)
+        except Exception as exc:  # noqa: BLE001
+            await interaction.followup.send(f"Could not read claims: {exc}", ephemeral=True)
+            return
+        await interaction.followup.send(text[:1900], ephemeral=True)
 
     @tree.command(name="pending", description="List proposals waiting for a decision")
     async def pending(interaction: discord.Interaction) -> None:

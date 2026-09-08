@@ -4,6 +4,7 @@ Everything here is best-effort: if ESPN changes shape or is unreachable, callers
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Iterable
@@ -15,8 +16,47 @@ from .players import PlayerDB, normalize_name
 log = logging.getLogger(__name__)
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
+ESPN_FANTASY_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
 TEAM_ABBR_FIX = {"WSH": "WAS"}  # ESPN abbreviation -> Sleeper abbreviation
 HEALTHY = {"Active", "", None}
+
+# ESPN fantasy stat ids -> Sleeper stat keys (offense only; kickers and D/ST use different buckets).
+ESPN_STAT_KEYS = {
+    "0": "pass_att", "1": "pass_cmp", "3": "pass_yd", "4": "pass_td", "19": "pass_2pt", "20": "pass_int",
+    "23": "rush_att", "24": "rush_yd", "25": "rush_td", "26": "rush_2pt",
+    "53": "rec", "58": "rec_tgt", "42": "rec_yd", "43": "rec_td", "44": "rec_2pt",
+    "72": "fum_lost",
+}
+ESPN_POSITIONS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DEF"}
+
+
+@dataclass
+class Game:
+    home: str
+    away: str
+    kickoff: str  # ISO 8601, UTC
+    state: str  # pre | in | post
+    detail: str
+    weather: str
+    indoor: bool
+    venue: str
+
+    @property
+    def teams(self) -> tuple[str, str]:
+        return self.home, self.away
+
+    @property
+    def started(self) -> bool:
+        return self.state in ("in", "post")
+
+
+@dataclass
+class ProjectionRow:
+    name: str
+    team: str | None
+    position: str | None
+    injury_status: str | None
+    stats: dict  # Sleeper-keyed
 
 
 @dataclass
@@ -97,6 +137,85 @@ class ESPNNews:
                 )
         return notes
 
+    async def scoreboard(self) -> list[Game]:
+        """This week's games with kickoff time, status and weather."""
+        data = await self._get("/scoreboard")
+        games: list[Game] = []
+        for event in (data or {}).get("events") or []:
+            try:
+                comp = event["competitions"][0]
+                sides = {c["homeAway"]: str(c["team"]["abbreviation"]).upper() for c in comp["competitors"]}
+                status = (comp.get("status") or {}).get("type") or {}
+                weather = event.get("weather") or {}
+                weather_text = ""
+                if weather:
+                    weather_text = str(weather.get("displayValue") or "")
+                    if weather.get("temperature") is not None:
+                        weather_text += f" {weather['temperature']}°F"
+                venue = comp.get("venue") or {}
+                games.append(
+                    Game(
+                        home=TEAM_ABBR_FIX.get(sides.get("home", ""), sides.get("home", "")),
+                        away=TEAM_ABBR_FIX.get(sides.get("away", ""), sides.get("away", "")),
+                        kickoff=str(event.get("date") or ""),
+                        state=str(status.get("state") or "pre"),
+                        detail=str(status.get("shortDetail") or ""),
+                        weather=weather_text.strip(),
+                        indoor=bool(venue.get("indoor")),
+                        venue=str(venue.get("fullName") or ""),
+                    )
+                )
+            except (KeyError, IndexError, TypeError):
+                continue
+        return games
+
+    async def projections(self, season: str, week: int, limit: int = 1500) -> list[ProjectionRow]:
+        """ESPN's weekly fantasy projections (offense), with stats translated to Sleeper keys."""
+        abbrs = await self.team_abbreviations()
+        headers = {
+            "x-fantasy-filter": json.dumps(
+                {
+                    "players": {
+                        "limit": limit,
+                        "sortPercOwned": {"sortAsc": False, "sortPriority": 1},
+                        "filterStatsForCurrentSeasonScoringPeriodId": {"value": [week]},
+                    }
+                }
+            ),
+            "user-agent": "fantasy-football-manager/0.1",
+        }
+        url = f"{ESPN_FANTASY_BASE}/seasons/{season}/segments/0/leaguedefaults/3"
+        try:
+            resp = await self._client.get(url, params={"scoringPeriodId": str(week), "view": "kona_player_info"}, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("ESPN projections unavailable: %s", exc)
+            return []
+        rows: list[ProjectionRow] = []
+        for entry in data.get("players") or []:
+            player = entry.get("player") or {}
+            proj = next(
+                (s for s in player.get("stats") or [] if s.get("statSourceId") == 1 and s.get("scoringPeriodId") == week),
+                None,
+            )
+            if not proj:
+                continue
+            raw = proj.get("stats") or {}
+            stats = {ESPN_STAT_KEYS[k]: float(v) for k, v in raw.items() if k in ESPN_STAT_KEYS and v}
+            if not stats:
+                continue
+            rows.append(
+                ProjectionRow(
+                    name=str(player.get("fullName") or ""),
+                    team=abbrs.get(str(player.get("proTeamId"))),
+                    position=ESPN_POSITIONS.get(int(player.get("defaultPositionId") or 0)),
+                    injury_status=player.get("injuryStatus"),
+                    stats=stats,
+                )
+            )
+        return rows
+
     async def news(self, limit: int = 60) -> list[NewsItem]:
         data = await self._get("/news", {"limit": str(limit)})
         if not data:
@@ -126,6 +245,24 @@ def match_injuries(notes: Iterable[InjuryNote], players: PlayerDB, candidate_ids
         chosen = same_team[0] if same_team else (cands[0] if len(cands) == 1 else None)
         if chosen:
             out[str(pid)] = chosen
+    return out
+
+
+def match_projections(rows: Iterable[ProjectionRow], players: PlayerDB, candidate_ids: Iterable[str]) -> dict[str, dict]:
+    """Map Sleeper player ids to ESPN projection stat lines by normalized name (+ team when it disambiguates)."""
+    by_name: dict[str, list[ProjectionRow]] = {}
+    for row in rows:
+        by_name.setdefault(normalize_name(row.name), []).append(row)
+    out: dict[str, dict] = {}
+    for pid in candidate_ids:
+        cands = by_name.get(normalize_name(players.name(pid)))
+        if not cands:
+            continue
+        team = players.team(pid)
+        same_team = [r for r in cands if r.team == team]
+        chosen = same_team[0] if same_team else (cands[0] if len(cands) == 1 else None)
+        if chosen:
+            out[str(pid)] = chosen.stats
     return out
 
 

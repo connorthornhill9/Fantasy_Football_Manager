@@ -55,16 +55,30 @@ async def cmd_ask(app: App, args: argparse.Namespace) -> int:
     return await _run_maybe_post(app, "ask", " ".join(args.question), args.post)
 
 
-async def cmd_roster(app: App, args: argparse.Namespace) -> int:
+async def cmd_snapshot(app: App, args: argparse.Namespace) -> int:
+    """Print the full briefing the model receives (for debugging)."""
     ctx = await app.advisor.build_context()
-    print(ctx.rules_markdown())
-    print()
-    print(ctx.roster_markdown(ctx.my_roster))
-    print()
-    print(ctx.matchup_markdown())
-    if args.full:
-        print("\nFree agents:")
-        print(ctx.free_agents_markdown())
+    print(ctx.snapshot_markdown(include_team_needs=args.trades))
+    return 0
+
+
+async def cmd_claims(app: App, args: argparse.Namespace) -> int:
+    if app.auth is None:
+        print("No Sleeper token is set, so claims cannot be read.")
+        return 1
+    target = await app.advisor.exec_target()
+    players = await app.advisor.player_db()
+    txs = await app.auth.get_transactions(target.league_id, types=["waiver"], limit=200)
+    mine = [t for t in txs if target.roster_id in (t.get("roster_ids") or [])]
+    if not mine:
+        print("No waiver claims on record for your team.")
+        return 0
+    mine.sort(key=lambda t: (t.get("status") != "pending", -(t.get("created") or 0)))
+    for t in mine[:20]:
+        adds = ", ".join(players.label(p) for p in (t.get("adds") or {})) or "-"
+        drops = ", ".join(players.label(p) for p in (t.get("drops") or {})) or "-"
+        note = (t.get("metadata") or {}).get("notes")
+        print(f"{t.get('status'):8} add {adds}; drop {drops}" + (f"  ({note})" if note else ""))
     return 0
 
 
@@ -236,8 +250,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("question", nargs="+")
     p.add_argument("--post", action="store_true", help="also post the result to the Discord channel")
 
-    p = sub.add_parser("roster", help="print my roster, matchup and projections")
-    p.add_argument("--full", action="store_true", help="also print the free-agent tables")
+    p = sub.add_parser("snapshot", help="print the full briefing the model receives (debugging)")
+    p.add_argument("--trades", action="store_true", help="include the positional-strength table")
+
+    sub.add_parser("claims", help="list my waiver claims and their outcomes")
 
     p = sub.add_parser("matchup", help="optimal lineup by projection and win probability (no AI call)")
     p.add_argument("--post", action="store_true", help="also post it to the Discord channel")
@@ -264,7 +280,8 @@ COMMANDS = {
     "run": cmd_run,
     "analyze": cmd_analyze,
     "ask": cmd_ask,
-    "roster": cmd_roster,
+    "snapshot": cmd_snapshot,
+    "claims": cmd_claims,
     "matchup": cmd_matchup,
     "whoami": cmd_whoami,
     "pending": cmd_pending,
