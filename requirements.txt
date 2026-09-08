@@ -1,0 +1,6 @@
+anthropic>=1.4.0
+discord.py>=2.7
+httpx>=0.28
+apscheduler>=3.11,<4
+python-dotenv>=1.0
+pydantic>=2

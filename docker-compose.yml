@@ -1,0 +1,8 @@
+services:
+  ffm:
+    build: .
+    container_name: ffm
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
