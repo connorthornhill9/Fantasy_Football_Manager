@@ -200,9 +200,27 @@ response tells the app, which resubmits the other way automatically and says so 
 
 ## Hosting it while you're away
 
-The bot must be online for scheduled posts and buttons to work. Two options:
+The bot must be online for scheduled posts and buttons to work. It is one small always-on
+process with no public port, so almost any host works. Three options:
 
-**A small always-on Linux server (recommended).** Any cheap VPS works (Hetzner, DigitalOcean,
+**Railway (easiest).** Deploys straight from the GitHub repo using the `Dockerfile` and
+`railway.json` included here; the Hobby plan is about $5 a month for this workload.
+
+1. Push this repo to GitHub.
+2. At railway.com create a project, choose **Deploy from GitHub repo**, and pick the repo.
+   Railway detects the Dockerfile and builds it.
+3. Open the service, go to **Variables**, click **Raw Editor**, and paste the contents of your
+   local `.env`. Keep `FFM_TIMEZONE` set to your league's timezone.
+4. Go to **Settings → Volumes**, add a volume, and mount it at `/app/data`. That folder holds
+   the database (locks, proposals) and the player cache, so they survive redeploys.
+5. Deploy. Under **Deployments → Logs** you should see "Discord connected as ..." followed by
+   the next scheduled run times. `/status` in Discord confirms it from your phone.
+
+Railway does not need a public domain for this service; ignore any prompt to add one. Every
+push to `main` redeploys automatically. To renew the Sleeper session token later, edit the
+variable in Railway and the service restarts on its own.
+
+**A small always-on Linux server.** Any cheap VPS works (Hetzner, DigitalOcean,
 Vultr and similar are a few dollars a month; Oracle Cloud has a free tier). Location doesn't
 matter: Sleeper, Discord and Anthropic are reachable from anywhere, and the schedule follows
 `FFM_TIMEZONE`, not the server's clock. With Docker installed on the server:
