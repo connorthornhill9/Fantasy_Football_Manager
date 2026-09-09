@@ -133,7 +133,7 @@ free agents can be picked up on the other days:
 |---|---|---|
 | `FFM_CRON_FA_SWEEP` | Monday 08:00 | Free-agent sweep after the week's games: direct adds of breakouts, no priority spent. |
 | `FFM_CRON_MARKET` | Tuesday 09:00 | Market review: claims for contested players, drops, IR, season stashes. |
-| `FFM_CRON_POST_WAIVERS` | Wednesday 12:15 | Reports how your claims resolved and picks up worthwhile leftovers. |
+| `FFM_CRON_POST_WAIVERS` | Thursday 08:00 | Once unclaimed players have become free agents again: reports how your claims resolved and picks up worthwhile leftovers. |
 | `FFM_CRON_LATE_WEEK` | Saturday 18:00 | After the final injury reports: replaces a ruled-out starter from the pool if needed, then sets the lineup. |
 
 The sweeps run with lower reasoning effort and fewer web searches than the Tuesday review to

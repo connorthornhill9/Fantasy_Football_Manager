@@ -67,10 +67,10 @@ TASKS = {
         "Keep it tight: at most 3 proposals, few tool calls, no lineup, no waiver claims. If nothing stands out, say so."
     ),
     "post_waivers": (
-        "Waivers just processed. First report the result of each of my claims (the briefing lists recent claim "
-        "outcomes). Anyone unclaimed is now a free agent again: propose direct adds for leftovers worth a roster "
-        "spot, especially if a claim of mine failed and the fallback is still available. At most 3 proposals, few "
-        "tool calls, no lineup."
+        "This week's waivers have processed and unclaimed players are free agents again. First report the result of "
+        "each of my claims (the briefing lists recent claim outcomes). Then propose direct adds (kind add or add_drop, "
+        "not waiver_claim) for leftovers worth a roster spot, especially if a claim of mine failed and the fallback is "
+        "still available. At most 3 proposals, few tool calls, no lineup."
     ),
     "late_week": (
         "Saturday evening: the final injury reports for week {week} are in and today is a free-agent day. Two jobs, "

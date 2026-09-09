@@ -92,7 +92,7 @@ class Config:
             effort=_str(os.environ.get("FFM_EFFORT")) or "high",
             cron_fa_sweep=_str(os.environ.get("FFM_CRON_FA_SWEEP")) or "0 8 * * 1",
             cron_market=_str(os.environ.get("FFM_CRON_MARKET")) or "0 9 * * 2",
-            cron_post_waivers=_str(os.environ.get("FFM_CRON_POST_WAIVERS")) or "15 12 * * 3",
+            cron_post_waivers=_str(os.environ.get("FFM_CRON_POST_WAIVERS")) or "0 8 * * 4",
             cron_late_week=_str(os.environ.get("FFM_CRON_LATE_WEEK")) or "0 18 * * 6",
             league_notes=_str(os.environ.get("FFM_LEAGUE_NOTES")),
             roast_rating=(_str(os.environ.get("FFM_ROAST_RATING")) or "pg13").lower().replace("-", ""),
