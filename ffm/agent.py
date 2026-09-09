@@ -250,6 +250,46 @@ class Advisor:
         )
         return "".join(b.text for b in response.content if b.type == "text").strip() or "(no recap produced)"
 
+    @staticmethod
+    def _roast_card(ctx: LeagueContext, r: dict) -> str:
+        """Everything embarrassing about one team, as data: record, points, rank, flops, bench mismanagement, injuries."""
+        s = r.get("settings") or {}
+        sections = ctx.roster_sections(r)
+        pf = float(s.get("fpts", 0)) + float(s.get("fpts_decimal", 0)) / 100
+        pa = float(s.get("fpts_against", 0)) + float(s.get("fpts_against_decimal", 0)) / 100
+        ranked = sorted(ctx.rosters, key=lambda x: (-int((x.get("settings") or {}).get("wins", 0)), -float((x.get("settings") or {}).get("fpts", 0))))
+        rank = next((i + 1 for i, x in enumerate(ranked) if int(x["roster_id"]) == int(r["roster_id"])), "?")
+        starters = [p for _, p in sections["starters"] if p != "0"]
+        starter_lines = [ctx.player_line(p) for p in starters]
+        bench_lines = [ctx.player_line(p) for p in sections["bench"]]
+
+        def flop(line) -> bool:
+            return line.recent_avg is not None and line.ros is not None and line.ros >= 6 and line.recent_avg < 0.6 * line.ros
+
+        flops = [f"{l.name} (avg {l.recent_avg:.1f} vs {l.ros:.1f} expected per game)" for l in starter_lines if flop(l)][:3]
+        by_pos_starter_min: dict[str, float] = {}
+        for l in starter_lines:
+            if l.recent_avg is not None:
+                by_pos_starter_min[l.pos] = min(by_pos_starter_min.get(l.pos, 999), l.recent_avg)
+        benched_studs = [
+            f"{l.name} ({l.pos}, avg {l.recent_avg:.1f} on the bench vs a {by_pos_starter_min[l.pos]:.1f} starter)"
+            for l in bench_lines
+            if l.recent_avg is not None and l.pos in by_pos_starter_min and l.recent_avg > by_pos_starter_min[l.pos] + 3
+        ][:2]
+        hurt = [f"{l.name} ({l.injury})" for l in starter_lines if l.injury][:3]
+        moves = [
+            t for t in ctx.transactions
+            if int(r["roster_id"]) in (t.get("roster_ids") or []) and t.get("status") == "complete"
+        ]
+        return (
+            f"- {ctx.owner_name(r)} (roster id {r['roster_id']}): record {s.get('wins', 0)}-{s.get('losses', 0)}, "
+            f"rank {rank} of {len(ctx.rosters)}, points for {pf:.1f}, points against {pa:.1f}, waiver priority {s.get('waiver_position', '?')}; "
+            f"starters: {', '.join(l.name for l in starter_lines)}; "
+            f"flops (starters far below expectation): {', '.join(flops) or 'none yet'}; "
+            f"bench players outscoring a starter: {', '.join(benched_studs) or 'none'}; "
+            f"injured starters: {', '.join(hurt) or 'none'}; moves in the last two weeks: {len(moves)}"
+        )
+
     async def roast(self, target: str | None = None, persona: str | None = None, rating: str | None = None) -> str:
         """Smack talk about the other teams (or one team), built from their actual rosters. One cheap model call."""
         ctx = await self.build_context()
@@ -266,21 +306,25 @@ class Advisor:
             for line in ctx.team_needs_markdown().splitlines()
             if "(me)" not in line and (line.startswith("| Roster") or line.startswith("|---") or line.split("|")[1].strip() in keep_ids)
         )
-        cards = []
-        for r in others:
-            s = r.get("settings") or {}
-            sections = ctx.roster_sections(r)
-            starters = [ctx.players.name(p) for _, p in sections["starters"] if p != "0"]
-            hurt = [f"{ctx.players.name(p)} ({ctx.players.injury(p)})" for _, p in sections["starters"] if p != "0" and ctx.players.injury(p)]
-            cards.append(
-                f"- {ctx.owner_name(r)} (roster id {r['roster_id']}): record {s.get('wins', 0)}-{s.get('losses', 0)}, "
-                f"waiver priority {s.get('waiver_position', '?')}; starters: {', '.join(starters)}; "
-                f"injured starters: {', '.join(hurt) or 'none'}"
-            )
+        cards = [self._roast_card(ctx, r) for r in others]
         style = (
             f"Speak as {persona} (a loving parody of their style, clearly a tribute)."
             if persona
             else "Speak as the team's cocky AI general manager."
+        )
+        period = (
+            "IMPORTANT: no games have been played yet this season, so every 'avg' figure is from the last three games "
+            "of LAST season; joke about last year's form, not this week's. "
+            if ctx.week <= 1
+            else "The 'avg' figures are each player's last three games this season. "
+        )
+        angles = (
+            period
+            + "Vary the angle from team to team and pick the most embarrassing one for each: the record and points "
+            "(who is losing, who is winning ugly, who is scoring the fewest points), flops (starters scoring well below "
+            "their projections), bench mismanagement (bench players outscoring starters), bad moves (drops, trades, "
+            "waiver panic from the transaction log), positional holes, and roster construction. Injuries are the least "
+            "interesting angle: use them for at most one or two teams, and never as the main joke for more than one."
         )
         scope = (
             "one paragraph per team, every team listed, in a random order"
@@ -290,12 +334,12 @@ class Advisor:
         prompt = (
             f"You manage the fantasy football team {ctx.owner_name(ctx.my_roster)} in the league '{ctx.league_name}'. "
             f"Write smack talk about the OTHER teams for the league's Discord: {scope}. Never roast or mention weaknesses of "
-            f"my own team ({ctx.owner_name(ctx.my_roster)}); I am the one talking. Roast the TEAMS, never the people: "
-            "their positional holes, injured starters, record, waiver spot, thin benches, questionable starters. Use the "
-            "positional-strength table and the team cards below for real material, and name at least one actual player per "
-            f"team. {self._tone(rating)} Bold each team "
+            f"my own team ({ctx.owner_name(ctx.my_roster)}); I am the one talking. Roast the TEAMS, never the people. "
+            f"{angles} Use the positional-strength table, the team cards and the transaction log below for real material, "
+            f"and name at least one actual player per team. {self._tone(rating)} Bold each team "
             f"name. Discord-friendly, no headers or tables. {'Under 1800 characters total.' if len(others) > 1 else 'Under 600 characters.'} {style}\n\n"
             f"Positional strength (percent of league average):\n{needs}\n\nTeam cards:\n" + "\n".join(cards)
+            + f"\n\nRecent transactions (newest first):\n{ctx.transactions_markdown(limit=30)}"
         )
         response = await self.client.messages.create(
             model=self.config.model,
