@@ -70,7 +70,9 @@ TASKS = {
         "This week's waivers have processed and unclaimed players are free agents again. First report the result of "
         "each of my claims (the briefing lists recent claim outcomes). Then propose direct adds (kind add or add_drop, "
         "not waiver_claim) for leftovers worth a roster spot, especially if a claim of mine failed and the fallback is "
-        "still available. At most 3 proposals, few tool calls, no lineup."
+        "still available. At most 3 proposals, few tool calls, no lineup. End the summary with one short 'Around the "
+        "league' paragraph: what the other teams did on waivers this week (from the recent transactions), what it says "
+        "about their needs, and anyone who overpaid priority for it."
     ),
     "late_week": (
         "Saturday evening: the final injury reports for week {week} are in and today is a free-agent day. Two jobs, "
@@ -203,6 +205,32 @@ class Advisor:
             messages=[{"role": "user", "content": prompt}],
         )
         return "".join(b.text for b in response.content if b.type == "text").strip() or "(no introduction produced)"
+
+    async def recap(self, persona: str | None = None, rating: str | None = None) -> str:
+        """A shareable recap of the league's transactions this week, with grades. One cheap model call."""
+        ctx = await self.build_context()
+        txs = ctx.transactions_markdown(limit=40)
+        if txs.startswith("(no"):
+            return "No transactions in the league in the last two weeks, so nothing to recap."
+        needs = ctx.team_needs_markdown()
+        style = f"Speak as {persona} (a loving parody of their style, clearly a tribute)." if persona else "Speak as the cocky AI general manager of my team."
+        prompt = (
+            f"You manage the fantasy football team {ctx.owner_name(ctx.my_roster)} in the league '{ctx.league_name}' "
+            f"(week {ctx.week}). Write a 'transaction recap' for the league's Discord covering the last two weeks of "
+            "waiver claims, free-agent adds, drops and trades listed below. For each team that made moves: one or two "
+            "sentences and a letter grade (A to F). Name a 'Move of the week' and a 'Head-scratcher of the week'. Use the "
+            "positional-strength table to judge whether a move fixed a real hole or was panic. Teams that did nothing get "
+            "one dismissive line. My own team gets an honest, slightly self-serving grade. Bold each team name. "
+            f"Discord-friendly, no headers or tables, under 1800 characters. {self._tone(rating)} {style}\n\n"
+            f"Transactions (newest first):\n{txs}\n\nPositional strength (percent of league average):\n{needs}"
+        )
+        response = await self.client.messages.create(
+            model=self.config.model,
+            max_tokens=1200,
+            output_config={"effort": "low"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(b.text for b in response.content if b.type == "text").strip() or "(no recap produced)"
 
     async def roast(self, target: str | None = None, persona: str | None = None, rating: str | None = None) -> str:
         """Smack talk about the other teams (or one team), built from their actual rosters. One cheap model call."""

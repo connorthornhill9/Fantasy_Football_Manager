@@ -120,6 +120,7 @@ Slash commands in Discord:
 | `/claims` | Your waiver claims: pending ones and how recent ones resolved. |
 | `/introduce [persona]` | The bot introduces itself to the league, posted publicly. Invents its own character, or imitates one you name. |
 | `/roast [team] [persona]` | Smack talk built from the other teams' actual rosters: holes, injured starters, records. Whole league or one team. |
+| `/recap [persona]` | Grades every team's waiver, free-agent and trade moves from the last two weeks, with a move of the week. Posted publicly. |
 | `/pending` | Proposals awaiting a decision. |
 | `/approve id`, `/reject id` | Same as the buttons. |
 | `/lock player`, `/unlock player`, `/locks` | Protect players (see below). |
@@ -133,7 +134,7 @@ free agents can be picked up on the other days:
 |---|---|---|
 | `FFM_CRON_FA_SWEEP` | Monday 08:00 | Free-agent sweep after the week's games: direct adds of breakouts, no priority spent. |
 | `FFM_CRON_MARKET` | Tuesday 09:00 | Market review: claims for contested players, drops, IR, season stashes. |
-| `FFM_CRON_POST_WAIVERS` | Thursday 08:00 | Once unclaimed players have become free agents again: reports how your claims resolved and picks up worthwhile leftovers. |
+| `FFM_CRON_POST_WAIVERS` | Thursday 03:30 | Right after unclaimed players become free agents again: reports how your claims resolved, picks up worthwhile leftovers, and adds an "around the league" paragraph on what everyone else did. Proposals wait for your approval and are re-checked then, so an early run costs nothing if a player is gone by morning. |
 | `FFM_CRON_LATE_WEEK` | Saturday 18:00 | After the final injury reports: replaces a ruled-out starter from the pool if needed, then sets the lineup. |
 
 The sweeps run with lower reasoning effort and fewer web searches than the Tuesday review to

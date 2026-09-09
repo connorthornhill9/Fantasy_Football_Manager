@@ -461,6 +461,24 @@ def register_commands(bot: FFMBot) -> None:
             chunk, rest = rest[:1990], rest[1990:]
             await interaction.followup.send(chunk)
 
+    @tree.command(name="recap", description="Grade the league's waiver and trade moves from the last two weeks (posted publicly)")
+    @app_commands.describe(persona="Optional personality to imitate", rating="PG-13 or R (default from FFM_ROAST_RATING)")
+    @app_commands.choices(rating=RATINGS)
+    async def recap(interaction: discord.Interaction, persona: str | None = None, rating: str | None = None) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.defer(thinking=True)
+        try:
+            text = await bot.app.advisor.recap(persona, rating)
+        except Exception as exc:  # noqa: BLE001
+            await interaction.followup.send(f"Could not write a recap: {exc}", ephemeral=True)
+            return
+        first, rest = text[:1990], text[1990:]
+        await interaction.followup.send(first)
+        while rest:
+            chunk, rest = rest[:1990], rest[1990:]
+            await interaction.followup.send(chunk)
+
     @tree.command(name="sweep", description="Quick free-agent sweep: direct adds worth making today (no claims, no lineup)")
     async def sweep(interaction: discord.Interaction) -> None:
         if not owner_only(interaction):

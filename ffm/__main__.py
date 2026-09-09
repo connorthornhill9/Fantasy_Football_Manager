@@ -87,6 +87,11 @@ async def cmd_introduce(app: App, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_recap(app: App, args: argparse.Namespace) -> int:
+    print(await app.advisor.recap(args.persona, args.rating))
+    return 0
+
+
 async def cmd_roast(app: App, args: argparse.Namespace) -> int:
     print(await app.advisor.roast(" ".join(args.team) if args.team else None, args.persona, args.rating))
     return 0
@@ -272,6 +277,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("introduce", help="print a funny self-introduction for the league")
     p.add_argument("persona", nargs="*", help="optional personality to imitate, e.g. John Madden")
 
+    p = sub.add_parser("recap", help="grade the league's transactions from the last two weeks")
+    p.add_argument("--persona", help="optional personality to imitate")
+    p.add_argument("--rating", choices=["pg13", "r"], help="override FFM_ROAST_RATING")
+
     p = sub.add_parser("roast", help="smack talk the other teams (or one team)")
     p.add_argument("team", nargs="*", help="optional team name; blank = whole league")
     p.add_argument("--persona", help="optional personality to imitate")
@@ -306,6 +315,7 @@ COMMANDS = {
     "claims": cmd_claims,
     "introduce": cmd_introduce,
     "roast": cmd_roast,
+    "recap": cmd_recap,
     "matchup": cmd_matchup,
     "whoami": cmd_whoami,
     "pending": cmd_pending,
