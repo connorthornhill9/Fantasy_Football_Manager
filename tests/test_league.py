@@ -57,7 +57,7 @@ THEM = {"roster_id": 2, "owner_id": "them", "players": ["9"], "starters": ["9"],
 def make_ctx(locked: dict | None = None) -> LeagueContext:
     config = Config(
         sleeper_username="me", sleeper_league_id="L", sleeper_token=None, discord_bot_token=None,
-        discord_channel_id=None, discord_owner_id=None, discord_guild_id=None, model="m", effort="high",
+        discord_channel_id=None, discord_owner_id=None, discord_guild_id=None, model="m", model_premium="mp", effort="high",
         cron_fa_sweep="0 8 * * 1", cron_market="0 9 * * 2", cron_post_waivers="15 12 * * 3", cron_late_week="0 18 * * 6",
         league_notes="Tue: locked. Wed: claims process at noon.", roast_rating="pg13", auto_claim=False, timezone=None,
         data_dir=Path("."), dry_run=True, max_proposals=6, web_search=False, espn_news=False,

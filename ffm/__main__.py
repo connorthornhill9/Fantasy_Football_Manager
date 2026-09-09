@@ -42,7 +42,7 @@ async def _run_maybe_post(app: App, trigger: str, focus: str | None, post: bool)
             return 1
         print(f"Posted run {result.run_id} to Discord with {len(result.proposals)} proposal(s).")
     else:
-        result = await app.advisor.run(trigger, focus)
+        result = await app.advisor.run(trigger, focus, allow_proposals=(trigger != "news"))
     _print_result(app, result)
     return 0
 
@@ -259,7 +259,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("analyze", help="run an analysis now and print the proposals")
     p.add_argument(
         "--trigger",
-        choices=["weekly_waivers", "fa_sweep", "post_waivers", "late_week", "lineup", "trades", "manual"],
+        choices=["weekly_waivers", "fa_sweep", "post_waivers", "late_week", "lineup", "trades", "news", "manual"],
         default="weekly_waivers",
     )
     p.add_argument("--focus", help="extra instructions for the advisor")

@@ -50,7 +50,8 @@ class Config:
     discord_guild_id: int | None
 
     # Claude
-    model: str
+    model: str  # sweeps, quick checks and the fun commands
+    model_premium: str  # the runs where judgment matters most: market review and lineups
     effort: str
 
     # Behaviour (cron strings, standard 5-field, 0 = Sunday; "off" disables a run)
@@ -89,7 +90,8 @@ class Config:
             discord_channel_id=_int(os.environ.get("DISCORD_CHANNEL_ID")),
             discord_owner_id=_int(os.environ.get("DISCORD_OWNER_ID")),
             discord_guild_id=_int(os.environ.get("DISCORD_GUILD_ID")),
-            model=_str(os.environ.get("FFM_MODEL")) or "claude-opus-5",
+            model=_str(os.environ.get("FFM_MODEL")) or "claude-sonnet-5",
+            model_premium=_str(os.environ.get("FFM_MODEL_PREMIUM")) or "claude-opus-5",
             effort=_str(os.environ.get("FFM_EFFORT")) or "high",
             cron_fa_sweep=_str(os.environ.get("FFM_CRON_FA_SWEEP")) or "0 8 * * 1",
             cron_market=_str(os.environ.get("FFM_CRON_MARKET")) or "0 9 * * 2",

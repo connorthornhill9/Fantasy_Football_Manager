@@ -60,8 +60,11 @@ Check it:
 ### 2. Claude
 
 - `ANTHROPIC_API_KEY`: from <https://console.anthropic.com>.
-- `FFM_MODEL` / `FFM_EFFORT`: defaults are `claude-opus-5` and `high`. A full review is
-  roughly 40-80k input tokens and a few thousand output tokens.
+- `FFM_MODEL_PREMIUM` (default `claude-opus-5`) runs the Tuesday market review and the lineup
+  runs, where judgment matters most. `FFM_MODEL` (default `claude-sonnet-5`) runs the sweeps,
+  `/news`, `/ask`, `/trades` and the fun commands. `FFM_EFFORT` (default `high`) caps reasoning
+  effort; sweeps are held to medium regardless. A typical week of four scheduled runs costs
+  roughly $1.50 with these defaults.
 
 Try a dry analysis in the terminal (no Discord, no Sleeper token needed):
 
@@ -117,6 +120,7 @@ Slash commands in Discord:
 | `/matchup` | Optimal lineup by projection plus a win-probability estimate. Instant, no AI call. |
 | `/trades` | Realistic trade ideas based on every team's positional strengths. Advice only. |
 | `/ask question` | Ask anything about your team or league; it can propose a move if that is the answer. |
+| `/news player` | Priority news on one player from the last week, with sources, and what it means for your team and league. Information only. |
 | `/claims` | Your waiver claims: pending ones and how recent ones resolved. |
 | `/introduce [persona]` | The bot introduces itself to the league, posted publicly. Invents its own character, or imitates one you name. |
 | `/roast [team] [persona]` | Smack talk built from the other teams' actual rosters: holes, injured starters, records. Whole league or one team. |

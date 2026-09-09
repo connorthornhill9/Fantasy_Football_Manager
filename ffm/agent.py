@@ -49,14 +49,28 @@ TASKS = {
         "its rationale."
     ),
     "lineup": (
-        "Set my starting lineup for week {week}. This run is about the LINEUP only: no adds or drops. Start from the "
-        "computed optimal lineup, then adjust for what projections miss: injury designations and practice notes, "
-        "suspensions, game-time decisions, weather (wind and heavy rain hurt passing games and kickers; domes do not), "
-        "kickoff timing (a player whose game has started cannot be moved; prefer a healthy earlier-game player over a "
-        "Monday-night question mark only if the projections are close), recent usage trends and the matchup. Propose "
-        "one complete lineup only if it differs from the current one, with one sentence per change explaining why it "
-        "deviates from (or agrees with) the computed optimum. If a slot has no healthy option, say so and point the "
-        "manager to /analyze. End with the projected total and win probability."
+        "Set my starting lineup for week {week}. This run is about the LINEUP only: no adds or drops. Work through it "
+        "in this order. (1) Start from the computed optimal lineup. (2) For every close call, compare the two projection "
+        "sources side by side (the 'Proj wk' Sleeper column and the 'ESPN wk' column): where they disagree by more than "
+        "a couple of points, say which you trust and why (usage trend, matchup, role). (3) Check the week's games list "
+        "for each starter: weather (wind above ~15 mph and heavy rain hurt passing games; domes do not), kickoff timing "
+        "(a player whose game has started cannot be moved; a Monday-night question mark is riskier than a healthy "
+        "Sunday player when projections are close). (4) Use player_news, and web search for anything Questionable or "
+        "Doubtful, for injury designations, practice participation, suspensions and game-time-decision reports from the "
+        "last few days. (5) Consider recent usage trends and the matchup. Propose one complete lineup only if it differs "
+        "from the current one, with one sentence per change explaining why it deviates from (or agrees with) the "
+        "computed optimum. If a slot has no healthy option, say so and point the manager to /analyze. End with the "
+        "projected total and win probability."
+    ),
+    "news": (
+        "The manager wants a news briefing on: {focus}. First identify the player with search_players (if several "
+        "match, pick the one on my roster, then my opponent's, then the most relevant, and say so). Then gather "
+        "everything from the last 7 days: Sleeper status, the ESPN injury note, headlines, the team's depth chart at his "
+        "position (team_situation), and a web search or two for injury, suspension, role, trade or contract news. "
+        "Write a briefing: what happened and when (cite sources with dates), what it means for his value this week and "
+        "the rest of the season, who benefits or loses on his NFL team, and what it means for MY team specifically "
+        "(is he mine, my opponent's, a free agent, or on a rival roster; whether it changes my lineup, a pickup, or a "
+        "trade angle). Do not propose moves; this is information only. Under 1500 characters."
     ),
     "fa_sweep": (
         "Free-agent sweep the morning after this week's games (week {week} just finished; week {next_week} is next). "
@@ -79,8 +93,11 @@ TASKS = {
         "in order. (1) If one of my starters is Out, Doubtful or unlikely to play and no bench player is adequate, "
         "propose a direct free-agent replacement (kind add_drop). (2) Propose my starting lineup for week {week} "
         "using only players currently on the roster; if you also proposed an add, say in its rationale which slot he "
-        "should take if approved. Weigh injuries, practice notes, kickoff times, weather and matchups. If the "
-        "current lineup is already right and nobody needs replacing, say so in one short paragraph."
+        "should take if approved. For the lineup, compare the Sleeper and ESPN projection columns on every close call "
+        "and say which you trust and why; check each starter's game for weather and kickoff timing; use player_news "
+        "and web search on anyone Questionable or Doubtful for the latest practice and injury reports; weigh usage "
+        "trends and the matchup. If the current lineup is already right and nobody needs replacing, say so in one "
+        "short paragraph."
     ),
     "trades": (
         "Trade day. Using the positional-strength table, find one to three realistic trades that make my team better "
@@ -109,14 +126,15 @@ MAX_PAUSE_RESTARTS = 3
 # Per-run budget: reasoning effort (capped by FFM_EFFORT), web searches, and tool-loop iterations.
 # The sweeps are quick checks; the Tuesday market review is the one worth spending on.
 RUN_PROFILES = {
-    "weekly_waivers": {"effort": None, "searches": 6, "iterations": 30},
-    "trades": {"effort": None, "searches": 3, "iterations": 25},
-    "fa_sweep": {"effort": "medium", "searches": 3, "iterations": 12},
-    "post_waivers": {"effort": "medium", "searches": 2, "iterations": 12},
-    "late_week": {"effort": "medium", "searches": 4, "iterations": 16},
-    "lineup": {"effort": "medium", "searches": 4, "iterations": 16},
-    "manual": {"effort": None, "searches": 6, "iterations": 30},
-    "ask": {"effort": "medium", "searches": 3, "iterations": 15},
+    "weekly_waivers": {"effort": None, "searches": 6, "iterations": 30, "premium": True},
+    "trades": {"effort": None, "searches": 3, "iterations": 25, "premium": False},
+    "fa_sweep": {"effort": "medium", "searches": 3, "iterations": 12, "premium": False},
+    "post_waivers": {"effort": "medium", "searches": 2, "iterations": 12, "premium": False},
+    "late_week": {"effort": None, "searches": 5, "iterations": 18, "premium": True},
+    "lineup": {"effort": None, "searches": 5, "iterations": 18, "premium": True},
+    "news": {"effort": "medium", "searches": 4, "iterations": 10, "premium": False},
+    "manual": {"effort": None, "searches": 6, "iterations": 30, "premium": True},
+    "ask": {"effort": "medium", "searches": 3, "iterations": 15, "premium": False},
 }
 EFFORT_RANK = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 
@@ -307,7 +325,7 @@ class Advisor:
             )
 
         task = TASKS.get(trigger, TASKS["manual"]).format(week=ctx.week, next_week=ctx.week + 1, focus=focus or "general review")
-        if trigger not in ("ask", "manual") and focus:
+        if trigger not in ("ask", "manual", "news") and focus:
             task += f"\nAdditional instructions from the manager: {focus}"
         now = datetime.now(ZoneInfo(self.config.timezone)) if self.config.timezone else datetime.now().astimezone()
         date_line = (
@@ -319,7 +337,7 @@ class Advisor:
         messages: list[dict] = [{"role": "user", "content": f"# Date\n{date_line}\n\n{snapshot}\n\n# Task\n{task}"}]
 
         kwargs: dict = {}
-        model = self.config.model
+        model = self.config.model_premium if profile.get("premium") else self.config.model
         if model.startswith(("claude-opus-5", "claude-fable")):
             # Server-side refusal fallback: if the primary model declines, the API re-runs on a fallback model.
             kwargs["betas"] = ["server-side-fallback-2026-07-01"]

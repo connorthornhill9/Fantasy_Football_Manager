@@ -35,6 +35,7 @@ TRIGGER_TITLES = {
     "post_waivers": "Post-waiver sweep",
     "late_week": "Injury replacements + lineup",
     "lineup": "Lineup",
+    "news": "News briefing",
     "trades": "Trade ideas",
     "manual": "Team review",
     "ask": "Answer",
@@ -240,7 +241,7 @@ class FFMBot(commands.Bot):
             self._expire_stale()
             channel = await self.target_channel()
             try:
-                result = await self.app.advisor.run(trigger, focus)
+                result = await self.app.advisor.run(trigger, focus, allow_proposals=(trigger != "news"))
             except Exception as exc:  # noqa: BLE001
                 log.exception("Analysis failed")
                 await channel.send(f"Analysis failed: `{type(exc).__name__}: {str(exc)[:500]}`")
@@ -504,6 +505,14 @@ def register_commands(bot: FFMBot) -> None:
         await interaction.response.send_message("Looking for trades; ideas will appear in the channel in a few minutes.", ephemeral=True)
         await bot.run_analysis("trades")
 
+    @tree.command(name="news", description="Priority news on a player from the last week and what it means for your team")
+    @app_commands.describe(player="Player name, e.g. 'Cedric Gray'")
+    async def news(interaction: discord.Interaction, player: str) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.send_message(f"Checking the news on *{player[:100]}*; the briefing will appear in the channel.", ephemeral=True)
+        await bot.run_analysis("news", player)
+
     @tree.command(name="ask", description="Ask the advisor a question about your team or the league")
     @app_commands.describe(question="e.g. 'Should I start X or Y this week?' or 'Who is worth a FAAB bid?'")
     async def ask(interaction: discord.Interaction, question: str) -> None:
@@ -629,7 +638,8 @@ def register_commands(bot: FFMBot) -> None:
         runs = bot.app.store.recent_runs(1)
         last = f"run {runs[0]['id']} ({runs[0]['trigger']}, {runs[0]['status']}) at {runs[0]['created_at'][:16]}" if runs else "none"
         lines = [
-            f"Model: {cfg.model} (effort {cfg.effort}); web search {'on' if cfg.web_search else 'off'}; ESPN news {'on' if cfg.espn_news else 'off'}",
+            f"Models: {cfg.model_premium} for market review and lineups, {cfg.model} for sweeps and everything else (effort {cfg.effort}); "
+            f"web search {'on' if cfg.web_search else 'off'}; ESPN news {'on' if cfg.espn_news else 'off'}",
             f"Sleeper token: {token}",
             f"Dry run: {'yes (approved moves are logged, not sent)' if bot.app.executor.dry_run else 'no'}",
             f"Pending proposals: {len(bot.app.store.pending())}; locked players: {len(bot.app.store.locks())}",
