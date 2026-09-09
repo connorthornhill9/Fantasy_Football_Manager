@@ -32,12 +32,18 @@ class ExecutionResult:
 
 class Executor:
     def __init__(
-        self, auth: SleeperAuth | None, dry_run: bool = False, public: SleeperPublic | None = None, verify_delay: float = 4.0
+        self,
+        auth: SleeperAuth | None,
+        dry_run: bool = False,
+        public: SleeperPublic | None = None,
+        verify_delay: float = 4.0,
+        auto_claim: bool = True,
     ):
         self.auth = auth
         self.dry_run = dry_run or auth is None
         self.public = public
         self.verify_delay = verify_delay
+        self.auto_claim = auto_claim
 
     async def execute(self, proposal: Proposal, target: ExecTarget) -> ExecutionResult:
         plan = self.describe_call(proposal, target)
@@ -54,6 +60,15 @@ class Executor:
                 alternate = self._alternate(proposal, exc)
                 if alternate is None:
                     raise
+                if alternate.kind == "waiver_claim" and not self.auto_claim:
+                    # A claim can cost waiver priority; leave that decision to the manager.
+                    return ExecutionResult(
+                        ok=False,
+                        message=(
+                            f"Not done: Sleeper says the player is still on waivers ({exc}). Approve again once he clears, "
+                            "or file a waiver claim yourself if he is worth the priority."
+                        ),
+                    )
                 # Sleeper decides whether a player is a free agent or on waivers; retry the other way.
                 log.info("Sleeper said %r; retrying as %s", str(exc), alternate.kind)
                 executed = alternate

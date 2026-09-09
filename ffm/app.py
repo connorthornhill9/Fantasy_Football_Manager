@@ -63,7 +63,7 @@ def build_app(config: Config) -> App:
     else:
         log.warning("SLEEPER_TOKEN not set: proposals can be reviewed but not executed (dry-run mode)")
     advisor.auth = auth
-    executor = Executor(auth, dry_run=config.dry_run, public=public)
+    executor = Executor(auth, dry_run=config.dry_run, public=public, auto_claim=config.auto_claim)
     if config.dry_run:
         log.info("FFM_DRY_RUN is on: approved proposals are logged, not sent to Sleeper")
     return App(config=config, public=public, store=store, advisor=advisor, executor=executor, auth=auth)

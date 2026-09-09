@@ -153,12 +153,20 @@ class WaiverAwareAuth(FakeAuth):
         return await super().waiver_claim(league_id, roster_id, adds, drops, faab_bid)
 
 
-def test_add_falls_back_to_waiver_claim():
+def test_add_falls_back_to_waiver_claim_when_allowed():
     auth = WaiverAwareAuth()
     p = Proposal(kind="add_drop", adds=["W"], drops=["2"], rationale="r")
-    result = run(Executor(auth).execute(p, TARGET))
+    result = run(Executor(auth, auto_claim=True).execute(p, TARGET))
     assert result.ok and "waiver claim instead" in result.message
     assert auth.calls[-1][0] == "waiver_claim" and auth.calls[-1][2]["drops"] == ["2"]
+
+
+def test_add_on_waivers_is_reported_when_auto_claim_is_off():
+    auth = WaiverAwareAuth()
+    p = Proposal(kind="add_drop", adds=["W"], drops=["2"], rationale="r")
+    result = run(Executor(auth, auto_claim=False).execute(p, TARGET))
+    assert not result.ok and "still on waivers" in result.message
+    assert auth.calls == []
 
 
 def test_claim_falls_back_to_direct_add():
