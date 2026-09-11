@@ -330,7 +330,26 @@ class FFMBot(commands.Bot):
 
     async def scheduled_run(self, trigger: str) -> None:
         log.info("Scheduled run: %s", trigger)
+        if trigger == "report_card":
+            await self.post_report()
+            return
         await self.run_analysis(trigger)
+
+    async def post_report(self, week: int | None = None, channel: discord.abc.Messageable | None = None) -> str | None:
+        """Evaluate last week (or the given week) and post the report card. No model call."""
+        from .evaluate import Evaluator
+
+        ctx = await self.app.advisor.build_context()
+        self._players = ctx.players
+        target_week = week if week is not None else ctx.week - 1
+        if target_week < 1:
+            return None
+        report = await Evaluator(self.app.store).evaluate_week(ctx, target_week)
+        text = report.markdown()
+        embed = discord.Embed(title=f"Report card — week {target_week}", description=text[:4000], color=discord.Color.orange())
+        embed.set_footer(text="Computed from actual scores; no AI involved. Rejections are scored too.")
+        await (channel or await self.target_channel()).send(embed=embed)
+        return text
 
     async def run_analysis(self, trigger: str, focus: str | None = None) -> RunResult | None:
         if self._analysis_lock.locked():
@@ -476,12 +495,14 @@ class FFMBot(commands.Bot):
             self._players = fresh.players
             if start and p.has_start_plan:
                 starters = fresh.lineup_with(added, p.start_slot or "", p.start_over)
-                lineup = Proposal(kind="lineup", starters=starters, rationale=f"Start {fresh.players.name(added)} at {p.start_slot}", horizon="this_week")
+                lineup = fresh.stamp(Proposal(kind="lineup", starters=starters, rationale=f"Start {fresh.players.name(added)} at {p.start_slot} (with proposal #{rec.id})", horizon="this_week"))
                 errs = fresh.validate_proposal(lineup)
                 if errs:
                     message += " Lineup NOT changed: " + "; ".join(errs)
                 else:
                     lres = await self.app.executor.execute(lineup, target)
+                    lrec = store.add_proposal(lineup, rec.run_id, status="executed" if lres.ok else "failed")
+                    store.set_status(lrec.id, lrec.status, lres.to_dict())
                     message += (" Started at " + str(p.start_slot) + ". " + lres.message) if lres.ok else (" Add done but the lineup change failed: " + lres.message)
             else:
                 suggestion = fresh.suggested_start_after_add(added)
@@ -502,7 +523,7 @@ class FFMBot(commands.Bot):
                         game_note=fresh.game_note(added),
                     )
                     if not fresh.validate_proposal(follow):
-                        frec = store.add_proposal(follow, rec.run_id)
+                        frec = store.add_proposal(fresh.stamp(follow), rec.run_id)
                         await self.post_proposal(await self.target_channel(), frec, fresh.players)
                         message += f" He is not starting yet; a lineup proposal (#{frec.id}) is posted below."
                 else:
@@ -647,6 +668,19 @@ def register_commands(bot: FFMBot) -> None:
         while rest:
             chunk, rest = rest[:1990], rest[1990:]
             await interaction.followup.send(chunk)
+
+    @tree.command(name="report", description="Report card: how last week's lineup and every proposal (approved or rejected) actually turned out")
+    @app_commands.describe(week="NFL week to evaluate (default: last week)")
+    async def report(interaction: discord.Interaction, week: int | None = None) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.defer(thinking=True)
+        try:
+            text = await bot.post_report(week, channel=None)
+        except Exception as exc:  # noqa: BLE001
+            await interaction.followup.send(f"Could not build the report: {exc}")
+            return
+        await interaction.followup.send("Report card posted." if text else "No completed week to evaluate yet.", ephemeral=True)
 
     @tree.command(name="sweep", description="Quick free-agent sweep: direct adds worth making today (no claims, no lineup)")
     async def sweep(interaction: discord.Interaction) -> None:

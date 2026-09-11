@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 # (job id, advisor trigger, display name, Config attribute holding the cron expression)
 JOBS = (
+    ("report_card", "report_card", "Report card", "cron_report"),
     ("fa_sweep", "fa_sweep", "Free-agent sweep", "cron_fa_sweep"),
     ("market", "weekly_waivers", "Market review", "cron_market"),
     ("post_waivers", "post_waivers", "Post-waiver sweep", "cron_post_waivers"),

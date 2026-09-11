@@ -79,8 +79,129 @@ class Store:
                     name TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS outcomes (
+                    proposal_id INTEGER NOT NULL,
+                    eval_week INTEGER NOT NULL,
+                    gain REAL,
+                    side_a REAL,
+                    side_b REAL,
+                    verdict TEXT NOT NULL,
+                    detail TEXT,
+                    computed_at TEXT NOT NULL,
+                    PRIMARY KEY (proposal_id, eval_week)
+                );
+                CREATE TABLE IF NOT EXISTS projection_log (
+                    week INTEGER NOT NULL,
+                    player_id TEXT NOT NULL,
+                    position TEXT,
+                    sleeper_proj REAL,
+                    espn_proj REAL,
+                    actual REAL,
+                    PRIMARY KEY (week, player_id)
+                );
+                CREATE TABLE IF NOT EXISTS week_predictions (
+                    week INTEGER PRIMARY KEY,
+                    win_prob REAL,
+                    my_points REAL,
+                    opp_points REAL,
+                    won INTEGER,
+                    lineup_points REAL,
+                    best_points REAL
+                );
+                CREATE TABLE IF NOT EXISTS reports (
+                    week INTEGER PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    text TEXT NOT NULL
+                );
                 """
             )
+
+    # ------------------------------------------------------------------ evaluation data
+
+    def upsert_projection_log(self, rows: list[tuple[int, str, str | None, float | None, float | None]]) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany(
+                """INSERT INTO projection_log (week, player_id, position, sleeper_proj, espn_proj)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(week, player_id) DO UPDATE SET position=excluded.position,
+                       sleeper_proj=excluded.sleeper_proj, espn_proj=excluded.espn_proj""",
+                rows,
+            )
+
+    def set_projection_actuals(self, week: int, actuals: dict[str, float]) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "UPDATE projection_log SET actual=? WHERE week=? AND player_id=?",
+                [(pts, week, pid) for pid, pts in actuals.items()],
+            )
+
+    def projection_log(self, up_to_week: int | None = None) -> list[dict]:
+        with self._lock:
+            if up_to_week is None:
+                rows = self._conn.execute("SELECT * FROM projection_log WHERE actual IS NOT NULL").fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM projection_log WHERE actual IS NOT NULL AND week<=?", (up_to_week,)
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_prediction(self, week: int, win_prob: float | None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO week_predictions (week, win_prob) VALUES (?, ?) ON CONFLICT(week) DO UPDATE SET win_prob=excluded.win_prob",
+                (week, win_prob),
+            )
+
+    def set_week_result(self, week: int, my_points: float, opp_points: float | None, lineup_points: float, best_points: float) -> None:
+        won = None if opp_points is None else int(my_points > opp_points)
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT INTO week_predictions (week, my_points, opp_points, won, lineup_points, best_points)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(week) DO UPDATE SET my_points=excluded.my_points, opp_points=excluded.opp_points,
+                       won=excluded.won, lineup_points=excluded.lineup_points, best_points=excluded.best_points""",
+                (week, my_points, opp_points, won, lineup_points, best_points),
+            )
+
+    def week_predictions(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM week_predictions ORDER BY week").fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_outcome(self, proposal_id: int, eval_week: int, gain: float | None, side_a: float | None, side_b: float | None, verdict: str, detail: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT INTO outcomes (proposal_id, eval_week, gain, side_a, side_b, verdict, detail, computed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(proposal_id, eval_week) DO UPDATE SET gain=excluded.gain, side_a=excluded.side_a,
+                       side_b=excluded.side_b, verdict=excluded.verdict, detail=excluded.detail, computed_at=excluded.computed_at""",
+                (proposal_id, eval_week, gain, side_a, side_b, verdict, detail, _now()),
+            )
+
+    def outcomes(self, eval_week: int | None = None) -> list[dict]:
+        with self._lock:
+            if eval_week is None:
+                rows = self._conn.execute("SELECT * FROM outcomes ORDER BY eval_week, proposal_id").fetchall()
+            else:
+                rows = self._conn.execute("SELECT * FROM outcomes WHERE eval_week=? ORDER BY proposal_id", (eval_week,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_report(self, week: int, text: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO reports (week, created_at, text) VALUES (?, ?, ?) ON CONFLICT(week) DO UPDATE SET created_at=excluded.created_at, text=excluded.text",
+                (week, _now(), text),
+            )
+
+    def latest_report(self) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM reports ORDER BY week DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def all_proposals(self) -> list[ProposalRecord]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM proposals ORDER BY id").fetchall()
+        return [self._row_to_record(r) for r in rows]
 
     # ------------------------------------------------------------------ locks
 

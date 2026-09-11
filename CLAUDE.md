@@ -18,6 +18,7 @@ on Sleeper through the same GraphQL API the Sleeper web app uses.
 - `ffm/store.py` – SQLite store for runs and proposals (`data/ffm.sqlite3`).
 - `ffm/agent.py` – `Advisor`: Claude tool-runner loop; tools read the context and `propose_move` records validated proposals.
 - `ffm/executor.py` – maps an approved `Proposal` onto Sleeper mutations; dry-run support.
+- `ffm/evaluate.py` – weekly self-evaluation from actual scores: lineup efficiency, realized gain of every proposal (rejections included), missed starts, projection accuracy. No model. Proposals carry `week` and a projection `snapshot` (`LeagueContext.stamp`) for this.
 - `ffm/discord_bot.py` – discord.py bot: proposal embeds with persistent buttons, slash commands.
 - `ffm/scheduler.py` – APScheduler cron jobs: Monday free-agent sweep, Tuesday market review, Wednesday post-waiver sweep, Saturday replacements + lineup. Standard cron day numbering (0 = Sunday) is translated for APScheduler.
 - `ffm/__main__.py` – CLI: `run`, `analyze [--trigger weekly_waivers|fa_sweep|post_waivers|late_week|lineup|trades] [--post]`, `ask`, `matchup`, `snapshot`, `claims`, `whoami`, `pending`, `execute`, `reject`, `lock`/`unlock`/`locks`.

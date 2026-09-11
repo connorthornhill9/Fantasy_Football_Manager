@@ -122,6 +122,7 @@ Slash commands in Discord:
 | `/ask question` | Ask anything about your team or league; it can propose a move if that is the answer. |
 | `/news player` | Priority news on one player from the last week, with sources, and what it means for your team and league. Information only. |
 | `/claims` | Your waiver claims: pending ones and how recent ones resolved. |
+| `/report [week]` | Report card for a finished week: lineup efficiency, how every proposal turned out, missed starts, projection accuracy. |
 | `/introduce [persona]` | The bot introduces itself to the league, posted publicly. Invents its own character, or imitates one you name. |
 | `/roast [team] [persona]` | Smack talk built from the other teams' actual rosters: holes, injured starters, records. Whole league or one team. |
 | `/recap [persona]` | Grades every team's waiver, free-agent and trade moves from the last two weeks, with a move of the week. Posted publicly. |
@@ -136,6 +137,7 @@ free agents can be picked up on the other days:
 
 | Setting | Default | Run |
 |---|---|---|
+| `FFM_CRON_REPORT` | Tuesday 08:30 | Report card for the finished week (see below). No AI call. |
 | `FFM_CRON_FA_SWEEP` | Monday 08:00 | Free-agent sweep after the week's games: direct adds of breakouts, no priority spent. |
 | `FFM_CRON_MARKET` | Tuesday 09:00 | Market review: claims for contested players, drops, IR, season stashes. |
 | `FFM_CRON_POST_WAIVERS` | Thursday 12:15 | After the week's claims have processed: reports how yours resolved, picks up worthwhile leftovers as direct adds, and adds an "around the league" paragraph on what everyone else did. |
@@ -148,6 +150,29 @@ league's pickup rules (which days are locked, when claims process) that goes int
 advisor's briefing verbatim.
 
 Pending proposals expire after 7 days.
+
+### Report card: the engine grades itself
+
+Every Tuesday morning (`FFM_CRON_REPORT`, default 08:30, before the market review) the app
+scores the finished week with no AI involved:
+
+- **Lineup efficiency**: what your starters scored against the best lineup your roster could
+  have fielded, and which swaps would have helped.
+- **Every proposal, approved or rejected**: realized gain (the added or started player's actual
+  points minus the dropped or benched one's), for the week of the move and the three after.
+  Rejections are scored identically; the verdict is written from your side: "advisor right",
+  "advisor wrong", "YOU PASSED on +14", or "good rejection". A running tally of your overrides
+  is kept.
+- **Missed starts**: an added player who out-scored a starter at his slot while sitting on your
+  bench. This is a process error and is called out by name.
+- **Projection accuracy**: how far Sleeper's and ESPN's projections were from actual points,
+  by position, accumulated over the season.
+- **Result and calibration**: the score, and what the win probability said beforehand.
+
+The card is posted to Discord, stored, and included in the next Tuesday briefing under "Your
+track record", so the advisor sees its own misses when it decides what to do next. `/report`
+runs it on demand for any finished week. Every proposal also stores a snapshot of the
+projections it was made from, so decisions are judged on what was known at the time.
 
 ### Optimal lineup and win probability
 

@@ -641,7 +641,7 @@ class Advisor:
             errors = ctx.validate_proposal(proposal)
             if errors:
                 return "REJECTED:\n- " + "\n- ".join(errors)
-            recorded.append(proposal)
+            recorded.append(ctx.stamp(proposal))
             note = f" ({proposal.game_note})" if proposal.game_note else ""
             return f"Recorded proposal #{len(recorded)}: {proposal.title(players.label)}{note}"
 

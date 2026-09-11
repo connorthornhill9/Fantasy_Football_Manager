@@ -40,6 +40,9 @@ class Proposal(BaseModel):
     start_slot: str | None = None
     start_over: str | None = None
     game_note: str | None = None  # e.g. "plays Thu Sep 10 8:20 PM EDT vs LAR (TODAY)"
+    week: int | None = None  # NFL week the proposal was made for
+    # What was known when it was proposed: projections per player, current starters, win probability.
+    snapshot: dict | None = None
 
     @property
     def has_start_plan(self) -> bool:

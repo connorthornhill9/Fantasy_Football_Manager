@@ -55,6 +55,7 @@ class Config:
     effort: str
 
     # Behaviour (cron strings, standard 5-field, 0 = Sunday; "off" disables a run)
+    cron_report: str
     cron_fa_sweep: str
     cron_market: str
     cron_post_waivers: str
@@ -94,6 +95,7 @@ class Config:
             model=_str(os.environ.get("FFM_MODEL")) or "claude-sonnet-5",
             model_premium=_str(os.environ.get("FFM_MODEL_PREMIUM")) or "claude-opus-5",
             effort=_str(os.environ.get("FFM_EFFORT")) or "high",
+            cron_report=_str(os.environ.get("FFM_CRON_REPORT")) or "30 8 * * 2",
             cron_fa_sweep=_str(os.environ.get("FFM_CRON_FA_SWEEP")) or "0 8 * * 1",
             cron_market=_str(os.environ.get("FFM_CRON_MARKET")) or "0 9 * * 2",
             cron_post_waivers=_str(os.environ.get("FFM_CRON_POST_WAIVERS")) or "15 12 * * 4",

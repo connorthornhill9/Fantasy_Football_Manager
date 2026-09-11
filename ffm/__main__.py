@@ -97,6 +97,19 @@ async def cmd_roast(app: App, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_report(app: App, args: argparse.Namespace) -> int:
+    from .evaluate import Evaluator
+
+    ctx = await app.advisor.build_context()
+    week = args.week if args.week is not None else ctx.week - 1
+    if week < 1:
+        print("No completed week to evaluate yet.")
+        return 0
+    report = await Evaluator(app.store).evaluate_week(ctx, week)
+    print(report.markdown())
+    return 0
+
+
 async def cmd_matchup(app: App, args: argparse.Namespace) -> int:
     if args.post:
         from .discord_bot import FFMBot
@@ -286,6 +299,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--persona", help="optional personality to imitate")
     p.add_argument("--rating", choices=["pg13", "r"], help="override FFM_ROAST_RATING")
 
+    p = sub.add_parser("report", help="report card for a finished week (no AI call)")
+    p.add_argument("--week", type=int, help="NFL week to evaluate (default: last week)")
+
     p = sub.add_parser("matchup", help="optimal lineup by projection and win probability (no AI call)")
     p.add_argument("--post", action="store_true", help="also post it to the Discord channel")
 
@@ -313,6 +329,7 @@ COMMANDS = {
     "ask": cmd_ask,
     "snapshot": cmd_snapshot,
     "claims": cmd_claims,
+    "report": cmd_report,
     "introduce": cmd_introduce,
     "roast": cmd_roast,
     "recap": cmd_recap,

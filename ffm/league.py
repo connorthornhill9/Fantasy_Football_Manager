@@ -100,6 +100,7 @@ class LeagueContext:
     played_ids: set[str] = field(default_factory=set)  # players with a game played this week (Sleeper stats feed)
     espn_proj: dict[str, float] = field(default_factory=dict)  # pid -> ESPN projection under league scoring
     locked: dict[str, str] = field(default_factory=dict)
+    last_report: str | None = None  # last week's report card, if one exists
     pending_claims: list[dict] = field(default_factory=list)  # my waiver claims awaiting the next run
     recent_claims: list[dict] = field(default_factory=list)  # my claims resolved in the last few days
     waiver_history: str | None = None  # e.g. "Wednesday 12:00 (67 claims), Thursday 03:00 (26 claims)"
@@ -217,6 +218,7 @@ class LeagueContext:
             matchups=matchups,
             transactions=[t for txs in tx_raw for t in txs],
             locked=store.locks() if store else {},
+            last_report=((store.latest_report() or {}).get("text") if store else None),
             pending_claims=pending_claims,
             recent_claims=recent_claims,
         )
@@ -230,6 +232,13 @@ class LeagueContext:
         ctx._ingest_news(injury_notes, news_items)
         ctx._ingest_espn_projections(espn_rows)
         ctx.waiver_history = await ctx._learn_waiver_cadence(public)
+        ctx._public = public  # kept for follow-up reads (evaluation)
+        if store is not None:
+            try:  # log what we believed this week, so accuracy can be measured once the games are played
+                store.upsert_projection_log(ctx.projection_log_rows())
+                store.upsert_prediction(ctx.week, ctx.matchup_summary().get("win_prob_current"))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not log projections: %s", exc)
         return ctx
 
     def _ingest_games(self, games: list[Game]) -> None:
@@ -358,6 +367,41 @@ class LeagueContext:
         if self.game_started(player_id):
             errors.append(f"{self.players.name(player_id)} cannot be started: his game has started")
         return errors
+
+    def proposal_snapshot(self, p: Proposal) -> dict:
+        """Record what was known at proposal time so the decision can be judged later on its own terms."""
+        ids = set(p.subject_player_ids()) | {str(s) for s in (self.my_roster.get("starters") or []) if str(s) != EMPTY_SLOT}
+        return {
+            "week": self.week,
+            "proj": {pid: self.proj_pts(pid) for pid in ids if pid != EMPTY_SLOT},
+            "espn": {pid: self.espn_proj.get(pid) for pid in ids if pid in self.espn_proj},
+            "season_pg": {pid: self.season_proj.get(pid) for pid in ids if pid in self.season_proj},
+            "starters": [str(s) for s in (self.my_roster.get("starters") or [])],
+            "slots": self.starter_slots,
+            "win_prob": (self.matchup_summary().get("win_prob_current")),
+        }
+
+    def stamp(self, p: Proposal) -> Proposal:
+        p.week = self.week
+        p.snapshot = self.proposal_snapshot(p)
+        return p
+
+    def projection_log_rows(self) -> list[tuple[int, str, str | None, float | None, float | None]]:
+        """(week, player_id, position, sleeper_proj, espn_proj) for players worth tracking for accuracy."""
+        ids: set[str] = {str(x) for x in (self.my_roster.get("players") or [])}
+        opp = self.opponent_roster()
+        if opp:
+            ids |= {str(x) for x in (opp.get("players") or [])}
+        for pos in self.used_positions:
+            ids |= {line.pid for line in self.free_agents(pos, 6)}
+        rows = []
+        for pid in ids:
+            proj = self.proj_pts(pid)
+            espn = self.espn_proj.get(pid)
+            if proj is None and espn is None:
+                continue
+            rows.append((self.week, pid, self.players.position(pid), proj, espn))
+        return rows
 
     def suggested_start_after_add(self, player_id: str) -> tuple[str, str | None, float] | None:
         """If the optimizer would start a newly added player, return (slot, player he displaces, projected gain)."""
@@ -1310,6 +1354,8 @@ class LeagueContext:
         ]
         if include_team_needs:
             parts += ["\n## Positional strength by team (for trade targeting)", self.team_needs_markdown()]
+        if self.last_report:
+            parts += ["\n## Your track record (last report card; learn from the misses, do not overreact to one week's variance)", self.last_report]
         parts += [
             "\n## Injury and availability notes (Sleeper status + ESPN injury report)",
             self.injury_report_markdown(),
