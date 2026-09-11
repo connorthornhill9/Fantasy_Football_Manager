@@ -168,12 +168,15 @@ offers locked players.
 
 ### Locked players
 
-`/lock Travis Kelce` marks a player as untouchable: the advisor can never propose dropping
-or trading him, and the validator rejects any such proposal even if the model tries. Locked
-players can still be started or benched. The model is told who is locked and may mention in
-its summary what it would do if you unlocked someone, so you still get the recommendation
-without the risk. `/unlock` removes the lock; `/locks` lists them. The same commands exist in
-the terminal (`python -m ffm lock <name>`).
+`/lockboard` posts your roster as a row of buttons: green means locked, click to toggle. A
+locked player is untouchable: the advisor can never propose dropping or trading him, and the
+validator rejects any such proposal even if the model tries. Locked players can still be
+started or benched. The model is told who is locked and may mention what it would do if you
+unlocked someone, so you still get the recommendation without the risk. `/lock name`,
+`/unlock name` and `/locks` do the same one at a time, as do the terminal commands.
+
+Locks live in the database. `FFM_LOCKED_PLAYERS` (comma-separated names) re-applies them at
+every startup, so they survive even if the hosting volume is lost.
 
 ### Data sources
 

@@ -193,6 +193,66 @@ class RejectButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:rej
         await bot.decide(interaction, self.proposal_id, approve=False)
 
 
+class LockToggleButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:lock:(?P<pid>[A-Za-z0-9]+)"):
+    """One button per roster player on the lock board; click to toggle the lock."""
+
+    def __init__(self, player_id: str, name: str, locked: bool, row: int | None = None):
+        super().__init__(
+            discord.ui.Button(
+                label=f"{'🔒' if locked else '🔓'} {name}"[:80],
+                style=discord.ButtonStyle.success if locked else discord.ButtonStyle.secondary,
+                custom_id=f"ffm:lock:{player_id}",
+            ),
+            row=row,
+        )
+        self.player_id = player_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+        pid = match["pid"]
+        locked = pid in interaction.client.app.store.locks()  # type: ignore[attr-defined]
+        name = (item.label or "").lstrip("🔒🔓 ").strip() or pid
+        return cls(pid, name, locked)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot: FFMBot = interaction.client  # type: ignore[assignment]
+        if not bot.is_owner_user(interaction.user):
+            await interaction.response.send_message("Only the team owner can change locks.", ephemeral=True)
+            return
+        store = bot.app.store
+        players = await bot.players()
+        name = players.name(self.player_id)
+        if self.player_id in store.locks():
+            store.remove_lock(self.player_id)
+            locked = False
+        else:
+            store.add_lock(self.player_id, name)
+            locked = True
+        # Rebuild the whole board so every button reflects the current state.
+        assert interaction.message is not None
+        view = lock_board_view(bot, _button_ids(interaction.message), players)
+        await interaction.response.edit_message(view=view)
+        await interaction.followup.send(f"{'🔒 Locked' if locked else '🔓 Unlocked'} {players.label(self.player_id)}.", ephemeral=True)
+
+
+def _button_ids(message: discord.Message) -> list[str]:
+    ids: list[str] = []
+    for row in message.components:
+        for comp in getattr(row, "children", []):
+            cid = getattr(comp, "custom_id", "") or ""
+            if cid.startswith("ffm:lock:"):
+                ids.append(cid.split(":", 2)[2])
+    return ids
+
+
+def lock_board_view(bot: "FFMBot", player_ids: list[str], players: PlayerDB) -> discord.ui.View:
+    locks = bot.app.store.locks()
+    view = discord.ui.View(timeout=None)
+    for i, pid in enumerate(player_ids[:25]):
+        view.add_item(LockToggleButton(pid, players.name(pid), pid in locks, row=i // 5))
+    return view
+
+
 def decision_view(proposal_id: int, with_start: bool = False) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     if with_start:
@@ -219,7 +279,7 @@ class FFMBot(commands.Bot):
     # ----------------------------------------------------------------- lifecycle
 
     async def setup_hook(self) -> None:
-        self.add_dynamic_items(ApproveButton, ApproveStartButton, RejectButton)
+        self.add_dynamic_items(ApproveButton, ApproveStartButton, RejectButton, LockToggleButton)
         register_commands(self)
         if self.config.discord_guild_id:
             guild = discord.Object(id=self.config.discord_guild_id)
@@ -235,6 +295,14 @@ class FFMBot(commands.Bot):
         if self._start_scheduler and not self.scheduler.running:
             self.scheduler.start()
             log.info("Scheduler started:\n%s", describe_jobs(self.scheduler))
+        if self.config.locked_players and not getattr(self, "_locks_seeded", False):
+            self._locks_seeded = True
+            try:
+                added = await seed_locks(self.app)
+                if added:
+                    log.info("Seeded locks from FFM_LOCKED_PLAYERS: %s", ", ".join(added))
+            except Exception:  # noqa: BLE001
+                log.exception("Could not seed locks from FFM_LOCKED_PLAYERS")
 
     async def close(self) -> None:
         if self.scheduler.running:
@@ -453,6 +521,22 @@ class FFMBot(commands.Bot):
             await message.edit(embed=proposal_embed(rec, players), view=None)
         except discord.HTTPException as exc:
             log.warning("Could not update Discord message for proposal %s: %s", rec.id, exc)
+
+
+async def seed_locks(app: App) -> list[str]:
+    """Add locks named in FFM_LOCKED_PLAYERS (names or ids on my roster) that are not already locked. Never removes."""
+    ctx = await app.advisor.build_context()
+    existing = app.store.locks()
+    added = []
+    for entry in app.config.locked_players:
+        hits = [p["player_id"] for p in ctx.players.search(entry, limit=10)]
+        mine = [pid for pid in hits if ctx.on_my_roster(pid)]
+        if len(mine) != 1:
+            log.warning("FFM_LOCKED_PLAYERS entry %r did not match exactly one roster player (matches: %s)", entry, mine or hits[:3])
+            continue
+        if mine[0] not in existing and app.store.add_lock(mine[0], ctx.players.name(mine[0])):
+            added.append(ctx.players.name(mine[0]))
+    return added
 
 
 async def claims_text(bot: "FFMBot", limit: int = 12) -> str:
@@ -696,6 +780,27 @@ def register_commands(bot: FFMBot) -> None:
         bot.app.store.remove_lock(matches[0])
         await interaction.response.send_message(f"🔓 {players.label(matches[0])} is unlocked.", ephemeral=True)
 
+    @tree.command(name="lockboard", description="Show your roster as lock toggles: click a player to lock or unlock him")
+    async def lockboard(interaction: discord.Interaction) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            ctx = await bot.app.advisor.build_context()
+        except Exception as exc:  # noqa: BLE001
+            await interaction.followup.send(f"Could not load the roster: {exc}", ephemeral=True)
+            return
+        bot._players = ctx.players
+        sections = ctx.roster_sections(ctx.my_roster)
+        ordered = [p for _, p in sections["starters"] if p != "0"] + sections["bench"] + sections["ir"] + sections["taxi"]
+        channel = await bot.target_channel()
+        for i in range(0, len(ordered), 25):
+            chunk = ordered[i : i + 25]
+            header = "🔒 **Lock board** — green = locked (never dropped or traded). Click to toggle." if i == 0 else "Lock board (continued)"
+            await channel.send(header, view=lock_board_view(bot, chunk, ctx.players))
+        n = len(bot.app.store.locks())
+        await interaction.followup.send(f"Lock board posted for {len(ordered)} players; {n} currently locked.", ephemeral=True)
+
     @tree.command(name="locks", description="List locked players")
     async def locks_cmd(interaction: discord.Interaction) -> None:
         locks = bot.app.store.locks()
@@ -728,7 +833,8 @@ def register_commands(bot: FFMBot) -> None:
             f"web search {'on' if cfg.web_search else 'off'}; ESPN news {'on' if cfg.espn_news else 'off'}",
             f"Sleeper token: {token}",
             f"Dry run: {'yes (approved moves are logged, not sent)' if bot.app.executor.dry_run else 'no'}",
-            f"Pending proposals: {len(bot.app.store.pending())}; locked players: {len(bot.app.store.locks())}",
+            f"Pending proposals: {len(bot.app.store.pending())}; locked players: {len(bot.app.store.locks())}; "
+            f"proposals on record: {len(bot.app.store.list_proposals(limit=1000))} (drops to 0 after a deploy if the data volume is not mounted)",
             f"Last run: {last}",
             describe_jobs(bot.scheduler),
         ]

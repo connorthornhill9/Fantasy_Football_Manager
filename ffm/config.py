@@ -62,6 +62,7 @@ class Config:
     league_notes: str | None
     roast_rating: str  # "pg13" or "r"
     auto_claim: bool  # if a direct add fails because the player is on waivers, file a claim instead
+    locked_players: list[str]  # names or ids seeded into the lock list at startup (survives a lost database)
     timezone: str | None
     data_dir: Path
     dry_run: bool
@@ -100,6 +101,7 @@ class Config:
             league_notes=_str(os.environ.get("FFM_LEAGUE_NOTES")),
             roast_rating=(_str(os.environ.get("FFM_ROAST_RATING")) or "pg13").lower().replace("-", ""),
             auto_claim=_bool(os.environ.get("FFM_AUTO_CLAIM"), default=False),
+            locked_players=[s.strip() for s in (os.environ.get("FFM_LOCKED_PLAYERS") or "").split(",") if s.strip()],
             timezone=_str(os.environ.get("FFM_TIMEZONE")),
             data_dir=data_dir,
             dry_run=_bool(os.environ.get("FFM_DRY_RUN"), default=False),
