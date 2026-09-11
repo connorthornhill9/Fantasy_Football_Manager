@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -85,7 +86,8 @@ def proposal_embed(rec: ProposalRecord, players: PlayerDB, note: str | None = No
     if note:
         status_line += f"\n{note}"
     embed.add_field(name="Status", value=status_line[:1024], inline=False)
-    embed.set_footer(text=f"Proposal #{rec.id} · {rec.created_at[:16].replace('T', ' ')} UTC")
+    build = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7]
+    embed.set_footer(text=f"Proposal #{rec.id} · {rec.created_at[:16].replace('T', ' ')} UTC" + (f" · build {build}" if build else ""))
     return embed
 
 
@@ -719,7 +721,9 @@ def register_commands(bot: FFMBot) -> None:
             token = f"set, expires in {auth.token_info.seconds_remaining / 86400:.1f} days"
         runs = bot.app.store.recent_runs(1)
         last = f"run {runs[0]['id']} ({runs[0]['trigger']}, {runs[0]['status']}) at {runs[0]['created_at'][:16]}" if runs else "none"
+        build = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7] or "local"
         lines = [
+            f"Build: {build}",
             f"Models: {cfg.model_premium} for market review and lineups, {cfg.model} for sweeps and everything else (effort {cfg.effort}); "
             f"web search {'on' if cfg.web_search else 'off'}; ESPN news {'on' if cfg.espn_news else 'off'}",
             f"Sleeper token: {token}",

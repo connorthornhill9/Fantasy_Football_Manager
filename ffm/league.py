@@ -228,6 +228,8 @@ class LeagueContext:
         return ctx
 
     def _ingest_games(self, games: list[Game]) -> None:
+        if not games and self.config.espn_news:
+            log.warning("ESPN scoreboard returned no games: kickoff times and game locks are unknown for this run")
         for g in games:
             self.games[g.home] = g
             self.games[g.away] = g
@@ -777,6 +779,12 @@ class LeagueContext:
         """This week's schedule with kickoff (local time), status and weather; one line per game."""
         from zoneinfo import ZoneInfo
 
+        if not self.games:
+            return (
+                "WARNING: the game schedule could not be loaded, so kickoff times and game locks are UNKNOWN this run. "
+                "Do not assume anyone has or has not played; say so if it matters, and prefer waiting over lineup changes "
+                "that depend on it."
+            )
         seen: set[str] = set()
         tz = ZoneInfo(self.config.timezone) if self.config.timezone else None
         lines = []
