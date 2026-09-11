@@ -189,6 +189,50 @@ class Advisor:
             )
         return "Rating: PG-13. Witty rather than cruel, no slurs, nothing about anyone's personal life."
 
+    # ------------------------------------------------------------------ stage 2: lessons
+
+    def lessons_block(self) -> str:
+        kept = self.store.kept_lessons()
+        if not kept:
+            return ""
+        lines = "\n".join(f"- {l['text']}" for l in kept)
+        return (
+            "\n\nLessons from previous weeks (written from your own report cards and kept by the manager; follow them):\n"
+            + lines
+        )
+
+    async def review_week(self, week: int, report_text: str) -> dict:
+        """One cheap model call: turn a finished week's report card into at most 3 lessons and 2 engine suggestions."""
+        runs = [r for r in self.store.recent_runs(30) if r.get("summary") and r["status"] == "done"]
+        summaries = "\n\n".join(f"[{r['trigger']} at {r['created_at'][:16]}]\n{r['summary'][:1200]}" for r in runs[:6])
+        kept = self.store.kept_lessons()
+        dismissed = self.store.lessons(status="dismissed", kind="lesson")[-15:]
+        prompt = (
+            "You are reviewing your own performance as the AI assistant general manager of a fantasy football team. "
+            f"Below is the report card for week {week} (computed from actual scores; rejections were the manager's calls, "
+            "not yours) and the summaries you wrote that week.\n\n"
+            "Write at most 3 LESSONS: short, specific, actionable rules for your future decisions that address PROCESS "
+            "errors (something you could have known or done differently at the time), not outcome variance. A player "
+            "scoring more or less than projected is not a lesson unless the information was available beforehand. "
+            "Do not repeat or rephrase lessons already kept, and do not resubmit dismissed ones. If nothing warrants a "
+            "lesson, return none; an empty list is a good answer.\n\n"
+            "Also write at most 2 ENGINE SUGGESTIONS for the human who maintains the software: data sources or features "
+            "that would have prevented a miss (e.g. 'Thursday practice reports', 'snap counts'). Only if a miss was caused "
+            "by missing information or a missing feature.\n\n"
+            "Answer in JSON only: {\"lessons\": [\"...\"], \"suggestions\": [\"...\"]}. Each item under 200 characters.\n\n"
+            f"Report card:\n{report_text}\n\nYour summaries that week:\n{summaries or '(none)'}\n\n"
+            f"Lessons already kept:\n" + ("\n".join(f"- {l['text']}" for l in kept) or "(none)")
+            + "\n\nLessons previously dismissed by the manager:\n" + ("\n".join(f"- {l['text']}" for l in dismissed) or "(none)")
+        )
+        response = await self.client.messages.create(
+            model=self.config.model,
+            max_tokens=800,
+            output_config={"effort": "medium"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in response.content if b.type == "text")
+        return parse_review(text)
+
     async def introduce(self, persona: str | None = None, rating: str | None = None) -> str:
         """A short, funny public introduction of the bot as the team's manager (one cheap model call, no tools)."""
         ctx = await self.build_context()
@@ -398,7 +442,7 @@ class Advisor:
                 runner = self.client.beta.messages.tool_runner(
                     model=model,
                     max_tokens=16000,
-                    system=SYSTEM_PROMPT,
+                    system=SYSTEM_PROMPT + self.lessons_block(),
                     messages=messages,
                     tools=tools,
                     thinking={"type": "adaptive"},
@@ -663,6 +707,22 @@ class Advisor:
         if allow_proposals:
             tools += [propose_move, withdraw_proposal]
         return tools
+
+
+def parse_review(text: str) -> dict:
+    """Extract {"lessons": [...], "suggestions": [...]} from a model reply, tolerating prose or code fences around it."""
+    import json
+    import re
+
+    match = re.search(r"\{.*\}", text, re.S)
+    if not match:
+        return {"lessons": [], "suggestions": []}
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {"lessons": [], "suggestions": []}
+    clean = lambda items: [str(x).strip()[:200] for x in (items or []) if str(x).strip()]  # noqa: E731
+    return {"lessons": clean(data.get("lessons"))[:3], "suggestions": clean(data.get("suggestions"))[:2]}
 
 
 def _short(value: object, limit: int = 160) -> str:

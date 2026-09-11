@@ -253,6 +253,56 @@ def lock_board_view(bot: "FFMBot", player_ids: list[str], players: PlayerDB) -> 
     return view
 
 
+class LessonButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:lesson:(?P<action>keep|dismiss):(?P<id>\d+)"):
+    def __init__(self, lesson_id: int, action: str):
+        keep = action == "keep"
+        super().__init__(
+            discord.ui.Button(
+                label="Keep" if keep else "Dismiss",
+                style=discord.ButtonStyle.success if keep else discord.ButtonStyle.secondary,
+                custom_id=f"ffm:lesson:{action}:{lesson_id}",
+                emoji="📌" if keep else "🗑️",
+            )
+        )
+        self.lesson_id = lesson_id
+        self.action = action
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+        return cls(int(match["id"]), match["action"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot: FFMBot = interaction.client  # type: ignore[assignment]
+        if not bot.is_owner_user(interaction.user):
+            await interaction.response.send_message("Only the team owner can curate lessons.", ephemeral=True)
+            return
+        lesson = bot.app.store.get_lesson(self.lesson_id)
+        if lesson is None:
+            await interaction.response.send_message("That lesson no longer exists.", ephemeral=True)
+            return
+        status = "kept" if self.action == "keep" else "dismissed"
+        bot.app.store.set_lesson_status(self.lesson_id, status)
+        await interaction.response.edit_message(embed=lesson_embed(bot.app.store.get_lesson(self.lesson_id)), view=None)
+
+
+def lesson_embed(lesson: dict) -> discord.Embed:
+    colors = {"proposed": discord.Color.blurple(), "kept": discord.Color.green(), "dismissed": discord.Color.dark_grey()}
+    embed = discord.Embed(
+        title=f"Lesson #{lesson['id']} ({lesson['status']})",
+        description=lesson["text"],
+        color=colors.get(lesson["status"], discord.Color.blurple()),
+    )
+    embed.set_footer(text=f"From the week {lesson.get('week')} report card · kept lessons go into the advisor's instructions (max 10)")
+    return embed
+
+
+def lesson_view(lesson_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(LessonButton(lesson_id, "keep"))
+    view.add_item(LessonButton(lesson_id, "dismiss"))
+    return view
+
+
 def decision_view(proposal_id: int, with_start: bool = False) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     if with_start:
@@ -279,7 +329,7 @@ class FFMBot(commands.Bot):
     # ----------------------------------------------------------------- lifecycle
 
     async def setup_hook(self) -> None:
-        self.add_dynamic_items(ApproveButton, ApproveStartButton, RejectButton, LockToggleButton)
+        self.add_dynamic_items(ApproveButton, ApproveStartButton, RejectButton, LockToggleButton, LessonButton)
         register_commands(self)
         if self.config.discord_guild_id:
             guild = discord.Object(id=self.config.discord_guild_id)
@@ -348,8 +398,37 @@ class FFMBot(commands.Bot):
         text = report.markdown()
         embed = discord.Embed(title=f"Report card — week {target_week}", description=text[:4000], color=discord.Color.orange())
         embed.set_footer(text="Computed from actual scores; no AI involved. Rejections are scored too.")
-        await (channel or await self.target_channel()).send(embed=embed)
+        target = channel or await self.target_channel()
+        await target.send(embed=embed)
+        if report.complete:
+            await self.post_review(target_week, text, target)
         return text
+
+    async def post_review(self, week: int, report_text: str, channel: discord.abc.Messageable | None = None) -> int:
+        """Stage 2: ask the model for lessons from a finished week's card; post each with Keep / Dismiss."""
+        target = channel or await self.target_channel()
+        try:
+            review = await self.app.advisor.review_week(week, report_text)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Weekly review failed")
+            await target.send(f"Could not write this week's lessons: `{type(exc).__name__}: {str(exc)[:300]}`")
+            return 0
+        posted = 0
+        for text in review["lessons"]:
+            lid = self.app.store.add_lesson(week, "lesson", text)
+            msg = await target.send(embed=lesson_embed(self.app.store.get_lesson(lid)), view=lesson_view(lid))
+            self.app.store.set_lesson_message(lid, msg.channel.id, msg.id)
+            posted += 1
+        if review["suggestions"]:
+            for s in review["suggestions"]:
+                self.app.store.add_lesson(week, "suggestion", s, status="kept")
+            await target.send(
+                "🔧 **Engine suggestions** (for whoever maintains the code; not applied automatically):\n"
+                + "\n".join(f"- {s}" for s in review["suggestions"])
+            )
+        if not review["lessons"] and not review["suggestions"]:
+            await target.send("Weekly review: no process lessons this week; the misses look like variance.")
+        return posted
 
     async def run_analysis(self, trigger: str, focus: str | None = None) -> RunResult | None:
         if self._analysis_lock.locked():
@@ -681,6 +760,35 @@ def register_commands(bot: FFMBot) -> None:
             await interaction.followup.send(f"Could not build the report: {exc}")
             return
         await interaction.followup.send("Report card posted." if text else "No completed week to evaluate yet.", ephemeral=True)
+
+    @tree.command(name="review", description="Write lessons from the latest finished report card (Keep/Dismiss buttons)")
+    async def review(interaction: discord.Interaction) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        latest = bot.app.store.latest_report()
+        if not latest:
+            await interaction.response.send_message("No finished week on record yet; run /report after the week's games end.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        n = await bot.post_review(int(latest["week"]), latest["text"])
+        await interaction.followup.send(f"Posted {n} lesson(s) from the week {latest['week']} card.", ephemeral=True)
+
+    @tree.command(name="lessons", description="List the kept lessons the advisor follows; optionally drop one by id")
+    @app_commands.describe(remove="Lesson id to dismiss")
+    async def lessons_cmd(interaction: discord.Interaction, remove: int | None = None) -> None:
+        if not owner_only(interaction):
+            return await deny(interaction)
+        store = bot.app.store
+        if remove is not None:
+            ok = store.get_lesson(remove) is not None and store.set_lesson_status(remove, "dismissed")
+            await interaction.response.send_message(f"Lesson #{remove} {'dismissed' if ok else 'not found'}.", ephemeral=True)
+            return
+        kept = store.kept_lessons()
+        suggestions = [s for s in store.lessons(kind="suggestion") if s["status"] != "dismissed"][-5:]
+        lines = [f"**Kept lessons ({len(kept)}/{store.MAX_KEPT_LESSONS}):**"] + [f"#{l['id']} (wk {l['week']}): {l['text']}" for l in kept] or ["No kept lessons yet."]
+        if suggestions:
+            lines += ["", "**Engine suggestions on file:**"] + [f"- {s['text']}" for s in suggestions]
+        await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True)
 
     @tree.command(name="sweep", description="Quick free-agent sweep: direct adds worth making today (no claims, no lineup)")
     async def sweep(interaction: discord.Interaction) -> None:

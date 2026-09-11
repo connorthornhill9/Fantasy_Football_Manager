@@ -113,8 +113,63 @@ class Store:
                     created_at TEXT NOT NULL,
                     text TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    week INTEGER,
+                    kind TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'proposed',
+                    discord_channel_id INTEGER,
+                    discord_message_id INTEGER
+                );
                 """
             )
+
+    # ------------------------------------------------------------------ lessons (stage 2)
+
+    MAX_KEPT_LESSONS = 10
+
+    def add_lesson(self, week: int | None, kind: str, text: str, status: str = "proposed") -> int:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO lessons (created_at, week, kind, text, status) VALUES (?, ?, ?, ?, ?)",
+                (_now(), week, kind, text.strip(), status),
+            )
+            return int(cur.lastrowid)
+
+    def set_lesson_status(self, lesson_id: int, status: str) -> bool:
+        if status not in ("proposed", "kept", "dismissed"):
+            raise ValueError(status)
+        with self._lock, self._conn:
+            cur = self._conn.execute("UPDATE lessons SET status=? WHERE id=?", (status, lesson_id))
+            return cur.rowcount == 1
+
+    def set_lesson_message(self, lesson_id: int, channel_id: int, message_id: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE lessons SET discord_channel_id=?, discord_message_id=? WHERE id=?", (channel_id, message_id, lesson_id)
+            )
+
+    def get_lesson(self, lesson_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM lessons WHERE id=?", (lesson_id,)).fetchone()
+        return dict(row) if row else None
+
+    def lessons(self, status: str | None = None, kind: str | None = None) -> list[dict]:
+        clauses, params = [], []
+        if status:
+            clauses.append("status=?"); params.append(status)
+        if kind:
+            clauses.append("kind=?"); params.append(kind)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(f"SELECT * FROM lessons {where} ORDER BY id", params).fetchall()
+        return [dict(r) for r in rows]
+
+    def kept_lessons(self) -> list[dict]:
+        """The lessons that go into the advisor's instructions: the most recent kept ones, capped."""
+        return self.lessons(status="kept", kind="lesson")[-self.MAX_KEPT_LESSONS :]
 
     # ------------------------------------------------------------------ evaluation data
 

@@ -110,6 +110,37 @@ async def cmd_report(app: App, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_review(app: App, args: argparse.Namespace) -> int:
+    latest = app.store.latest_report()
+    if not latest:
+        print("No finished week on record yet.")
+        return 1
+    review = await app.advisor.review_week(int(latest["week"]), latest["text"])
+    print("Lessons:")
+    for text in review["lessons"] or ["(none)"]:
+        print("  -", text)
+    print("Engine suggestions:")
+    for text in review["suggestions"] or ["(none)"]:
+        print("  -", text)
+    if args.keep:
+        for text in review["lessons"]:
+            app.store.add_lesson(int(latest["week"]), "lesson", text, status="kept")
+        print("Kept all lessons.")
+    return 0
+
+
+async def cmd_lessons(app: App, args: argparse.Namespace) -> int:
+    if args.remove is not None:
+        print("dismissed" if app.store.set_lesson_status(args.remove, "dismissed") else "not found")
+        return 0
+    kept = app.store.kept_lessons()
+    if not kept:
+        print("No kept lessons.")
+    for l in kept:
+        print(f"#{l['id']} (week {l['week']}): {l['text']}")
+    return 0
+
+
 async def cmd_matchup(app: App, args: argparse.Namespace) -> int:
     if args.post:
         from .discord_bot import FFMBot
@@ -302,6 +333,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("report", help="report card for a finished week (no AI call)")
     p.add_argument("--week", type=int, help="NFL week to evaluate (default: last week)")
 
+    p = sub.add_parser("review", help="write lessons from the latest finished report card")
+    p.add_argument("--keep", action="store_true", help="keep the lessons without asking")
+    p = sub.add_parser("lessons", help="list kept lessons")
+    p.add_argument("--remove", type=int, help="dismiss a lesson by id")
+
     p = sub.add_parser("matchup", help="optimal lineup by projection and win probability (no AI call)")
     p.add_argument("--post", action="store_true", help="also post it to the Discord channel")
 
@@ -330,6 +366,8 @@ COMMANDS = {
     "snapshot": cmd_snapshot,
     "claims": cmd_claims,
     "report": cmd_report,
+    "review": cmd_review,
+    "lessons": cmd_lessons,
     "introduce": cmd_introduce,
     "roast": cmd_roast,
     "recap": cmd_recap,

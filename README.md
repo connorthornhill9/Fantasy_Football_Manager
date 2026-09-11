@@ -123,6 +123,7 @@ Slash commands in Discord:
 | `/news player` | Priority news on one player from the last week, with sources, and what it means for your team and league. Information only. |
 | `/claims` | Your waiver claims: pending ones and how recent ones resolved. |
 | `/report [week]` | Report card for a finished week: lineup efficiency, how every proposal turned out, missed starts, projection accuracy. |
+| `/review`, `/lessons [remove]` | Lessons the advisor wrote from its report cards; keep or dismiss them; list or drop the kept ones. |
 | `/introduce [persona]` | The bot introduces itself to the league, posted publicly. Invents its own character, or imitates one you name. |
 | `/roast [team] [persona]` | Smack talk built from the other teams' actual rosters: holes, injured starters, records. Whole league or one team. |
 | `/recap [persona]` | Grades every team's waiver, free-agent and trade moves from the last two weeks, with a move of the week. Posted publicly. |
@@ -173,6 +174,19 @@ The card is posted to Discord, stored, and included in the next Tuesday briefing
 track record", so the advisor sees its own misses when it decides what to do next. `/report`
 runs it on demand for any finished week. Every proposal also stores a snapshot of the
 projections it was made from, so decisions are judged on what was known at the time.
+
+### Lessons: the card changes the advisor's instructions
+
+After each finished week's report card, one cheap model call reviews it (together with the
+summaries the advisor wrote that week) and proposes at most three **lessons** and two **engine
+suggestions**. Lessons must address process errors, things that could have been known or done
+differently at the time, not scoring variance; the review is told that "no lessons" is a good
+answer. Each lesson posts to Discord with **Keep** and **Dismiss** buttons. Kept lessons are
+appended to the advisor's standing instructions on every run, capped at the ten most recent,
+so the advice changes without anyone editing code. Dismissed lessons are remembered so they
+are not proposed again. `/lessons` lists what is kept and can drop one; `/review` re-runs the
+review on demand. Engine suggestions ("Thursday practice reports would have caught this") are
+posted for the maintainer and never applied automatically.
 
 ### Optimal lineup and win probability
 
