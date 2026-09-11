@@ -635,6 +635,11 @@ class LeagueContext:
         if entry is None:
             team = p.get("team")
             opp = (self.team_opponents.get(team) or "BYE") if team else "-"
+        g = self.game_for(pid)
+        if g is not None and g.state == "post":
+            opp = f"{opp} PLAYED"
+        elif g is not None and g.state == "in":
+            opp = f"{opp} LIVE"
         line = PlayerLine(
             pid=pid,
             name=self.players.name(pid),
@@ -687,8 +692,19 @@ class LeagueContext:
         return out
 
     def optimal_starters(self, roster: dict | None = None) -> tuple[list[str], float]:
+        """Best lineup by projection, honouring game locks: a player whose game has started stays where he is
+        (starter or bench) and the remaining slots are optimised over players who have not played yet."""
         roster = roster or self.my_roster
-        return optimal_lineup(self.starter_slots, self.lineup_candidates(roster))
+        slots = self.starter_slots
+        current = [str(s) for s in (roster.get("starters") or [])] + [EMPTY_SLOT] * len(slots)
+        locked = {i: current[i] for i in range(len(slots)) if current[i] != EMPTY_SLOT and self.game_started(current[i])}
+        candidates = [c for c in self.lineup_candidates(roster) if not self.game_started(c.pid)]
+        open_slots = [s for i, s in enumerate(slots) if i not in locked]
+        chosen, _ = optimal_lineup(open_slots, candidates)
+        it = iter(chosen)
+        starters = [locked[i] if i in locked else next(it) for i in range(len(slots))]
+        total = round(sum(self.proj_pts(s) or 0.0 for s in starters if s != EMPTY_SLOT), 1)
+        return starters, total
 
     def lineup_pairs(self, starters: list[str]) -> list[tuple[str | None, float]]:
         return [(self.players.position(s), self.proj_pts(s) or 0.0) for s in starters if s != EMPTY_SLOT]
@@ -1230,7 +1246,9 @@ class LeagueContext:
             "# League and team snapshot",
             self.rules_markdown(),
             "\n## My roster",
-            "Columns: Proj wk = Sleeper/Rotowire projection this week under league scoring ('-' = no projected production); "
+            "Columns: Opp = this week's opponent; 'PLAYED' or 'LIVE' after it means the player's game is over or under way, "
+            "so he is LOCKED for the week: he cannot be moved into or out of the lineup and is not a fallback for later games. "
+            "Proj wk = Sleeper/Rotowire projection this week under league scoring ('-' = no projected production); "
             "ESPN wk = ESPN's projection under the same scoring (a second opinion; offense only); "
             "Season proj/gm = preseason full-season projection per game (a rest-of-season value proxy); "
             f"Recent avg = last 3 games played{' (end of last season)' if self.week <= 1 else ''}; Adds 24h = adds across all Sleeper leagues.",
