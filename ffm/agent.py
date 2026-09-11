@@ -30,7 +30,8 @@ How to work:
 - LOCKED players may never be dropped or traded away; the tool will reject it. You may still put them in or out of the lineup, and you may mention in the summary what you would do if the manager unlocked someone.
 - Waivers: read the league's waiver rules in the briefing, including any day-by-day notes from the manager; they decide whether today calls for a direct add (add / add_drop) or a waiver_claim. If you guess wrong the app automatically resubmits the other way, so pick the likelier one and move on. In a FAAB league size the bid to the player's value, the competition (adds in the last 24h), and my remaining budget. In a rolling-priority league a successful claim sends me to the bottom of the order, so only claim players worth that cost, and say what priority is being spent.
 - Lineup: only propose a lineup if it changes something. The starters list must be complete and in the league's slot order, with player ids, and "0" only where no eligible player exists.
-- Keep adds/drops separate from lineup decisions. A lineup proposal must use only players currently on the roster, because the manager may reject an add and still wants to know who to start. If a player you propose adding should also be started, say so in that proposal's rationale and expected_gain (e.g. "start him at LB over Gray once added") rather than proposing a lineup that includes him.
+- Keep adds/drops separate from lineup decisions. A lineup proposal must use only players currently on the roster, because the manager may reject an add and still wants to know who to start. If a player you propose adding should start this week, put it in the proposal itself with start_slot and start_over (the manager then gets an "Approve & start" button); never propose a lineup that includes a player who is not yet on the roster.
+- Game timing is part of every add/drop decision. The briefing lists each team's kickoff; for every add, say when the player's next game is and whether he must be started before a kickoff TODAY. Weigh it: a marginal streamer who plays Thursday is a bad add if the real question (a questionable starter) is not settled until Saturday, because the roster spot is spent before you know; a clearly better player is worth adding regardless of the day, and should be started immediately. When a player's game is today, say so prominently in the rationale.
 - The briefing states today's date. Use it to judge how fresh news is, and put the correct year in any search query.
 - Trades: propose only when the partner plausibly says yes and it clearly helps me; explain their incentive. Trade proposals are advice: the manager sends the offer in Sleeper himself, so write the rationale as a pitch he could paste to the other manager.
 - The briefing includes a computed optimal lineup by projection and a heuristic win probability. Treat the optimal lineup as the baseline and adjust for injury news, weather, and matchup context; when you propose a lineup, explain any deviation from the computed optimum.
@@ -585,12 +586,16 @@ class Advisor:
             i_get: list[str] | None = None,
             expected_gain: str | None = None,
             horizon: str | None = None,
+            start_slot: str | None = None,
+            start_over: str | None = None,
         ) -> str:
             """Record one concrete roster move for the manager to approve in Discord. Validated immediately; fix and retry on rejection.
 
             Args:
                 kind: One of add, drop, add_drop, waiver_claim, lineup, ir, activate_ir, taxi, trade.
                 horizon: Why now: this_week, short_term (next 3-4 weeks) or season (long-term investment). Required for adds, drops and claims.
+                start_slot: For adds only: the starting slot the added player should take right away (e.g. "LB", "FLEX"), if he should start this week. Omit if he is a bench/stash add.
+                start_over: For adds with start_slot: the player id of the current starter he replaces in that slot.
                 rationale: Two to four sentences the manager will read: why this move, what it costs, what could go wrong. Cite news sources with dates when news drives the move.
                 confidence: low, medium or high.
                 add_player_ids: Players to add (add, add_drop, waiver_claim), or the single player to activate (activate_ir).
@@ -628,12 +633,16 @@ class Advisor:
                 priority=len(recorded) + 1,
                 expected_gain=expected_gain,
                 horizon=horizon,  # type: ignore[arg-type]
+                start_slot=(start_slot or "").upper() or None,
+                start_over=str(start_over) if start_over else None,
+                game_note=ctx.game_note(add_player_ids[0]) if add_player_ids else None,
             )
             errors = ctx.validate_proposal(proposal)
             if errors:
                 return "REJECTED:\n- " + "\n- ".join(errors)
             recorded.append(proposal)
-            return f"Recorded proposal #{len(recorded)}: {proposal.title(players.label)}"
+            note = f" ({proposal.game_note})" if proposal.game_note else ""
+            return f"Recorded proposal #{len(recorded)}: {proposal.title(players.label)}{note}"
 
         @beta_async_tool
         async def withdraw_proposal(number: int) -> str:

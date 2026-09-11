@@ -36,6 +36,14 @@ class Proposal(BaseModel):
     priority: int = 1
     expected_gain: str | None = None
     horizon: Literal["this_week", "short_term", "season"] | None = None
+    # Start plan for adds: put the added player in `start_slot`, benching `start_over` (a current starter's id).
+    start_slot: str | None = None
+    start_over: str | None = None
+    game_note: str | None = None  # e.g. "plays Thu Sep 10 8:20 PM EDT vs LAR (TODAY)"
+
+    @property
+    def has_start_plan(self) -> bool:
+        return bool(self.adds and self.start_slot)
 
     def title(self, names: Callable[[str], str]) -> str:
         """Short one-line title. `names` maps a player id to a display label."""

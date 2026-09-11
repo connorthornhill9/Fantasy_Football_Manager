@@ -13,7 +13,7 @@ from discord.ext import commands
 from .agent import RunResult
 from .app import App
 from .players import PlayerDB
-from .proposals import HORIZON_LABELS, KIND_LABELS
+from .proposals import HORIZON_LABELS, KIND_LABELS, Proposal
 from .scheduler import build_scheduler, describe_jobs
 from .store import ProposalRecord
 
@@ -57,6 +57,16 @@ def proposal_embed(rec: ProposalRecord, players: PlayerDB, note: str | None = No
     embed.add_field(name="Confidence", value=p.confidence, inline=True)
     if p.horizon:
         embed.add_field(name="Horizon", value=HORIZON_LABELS.get(p.horizon, p.horizon), inline=True)
+    if p.adds and p.game_note:
+        urgent = "TODAY" in p.game_note or "IN PROGRESS" in p.game_note
+        embed.add_field(name=("⚠️ Game today" if urgent else "Next game"), value=f"{players.name(p.adds[0])} {p.game_note}", inline=False)
+    if p.has_start_plan and rec.status == "pending":
+        over = f" over {players.name(p.start_over)}" if p.start_over else ""
+        embed.add_field(
+            name="Start plan",
+            value=f"**Approve & start** puts {players.name(p.adds[0])} at {p.start_slot}{over} in the same step. Plain **Approve** only changes the roster.",
+            inline=False,
+        )
     if p.expected_gain:
         embed.add_field(name="Expected gain", value=p.expected_gain[:200], inline=True)
     if p.kind == "waiver_claim" and p.faab_bid is not None:
@@ -145,6 +155,24 @@ class ApproveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:ap
         await bot.decide(interaction, self.proposal_id, approve=True)
 
 
+class ApproveStartButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:approvestart:(?P<id>\d+)"):
+    def __init__(self, proposal_id: int):
+        super().__init__(
+            discord.ui.Button(
+                label="Approve & start", style=discord.ButtonStyle.primary, custom_id=f"ffm:approvestart:{proposal_id}", emoji="🏈"
+            )
+        )
+        self.proposal_id = proposal_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+        return cls(int(match["id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot: FFMBot = interaction.client  # type: ignore[assignment]
+        await bot.decide(interaction, self.proposal_id, approve=True, start=True)
+
+
 class RejectButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:reject:(?P<id>\d+)"):
     def __init__(self, proposal_id: int):
         super().__init__(
@@ -163,8 +191,10 @@ class RejectButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ffm:rej
         await bot.decide(interaction, self.proposal_id, approve=False)
 
 
-def decision_view(proposal_id: int) -> discord.ui.View:
+def decision_view(proposal_id: int, with_start: bool = False) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
+    if with_start:
+        view.add_item(ApproveStartButton(proposal_id))
     view.add_item(ApproveButton(proposal_id))
     view.add_item(RejectButton(proposal_id))
     return view
@@ -187,7 +217,7 @@ class FFMBot(commands.Bot):
     # ----------------------------------------------------------------- lifecycle
 
     async def setup_hook(self) -> None:
-        self.add_dynamic_items(ApproveButton, RejectButton)
+        self.add_dynamic_items(ApproveButton, ApproveStartButton, RejectButton)
         register_commands(self)
         if self.config.discord_guild_id:
             guild = discord.Object(id=self.config.discord_guild_id)
@@ -262,9 +292,12 @@ class FFMBot(commands.Bot):
         await channel.send(embed=summary_embed(result, trigger))
         players = await self.players()
         for rec in result.proposals:
-            view = decision_view(rec.id) if rec.status == "pending" else None
-            msg = await channel.send(embed=proposal_embed(rec, players), view=view)
-            self.app.store.set_discord_message(rec.id, channel.id, msg.id)  # type: ignore[attr-defined]
+            await self.post_proposal(channel, rec, players)
+
+    async def post_proposal(self, channel: discord.abc.Messageable, rec: ProposalRecord, players: PlayerDB) -> None:
+        view = decision_view(rec.id, with_start=rec.proposal.has_start_plan) if rec.status == "pending" else None
+        msg = await channel.send(embed=proposal_embed(rec, players), view=view)
+        self.app.store.set_discord_message(rec.id, channel.id, msg.id)  # type: ignore[attr-defined]
 
     async def post_matchup(self, channel: discord.abc.Messageable | None = None) -> None:
         """Post the computed optimal lineup and win probability (no model call)."""
@@ -275,7 +308,7 @@ class FFMBot(commands.Bot):
 
     # ----------------------------------------------------------------- decisions
 
-    async def decide(self, interaction: discord.Interaction, proposal_id: int, approve: bool) -> None:
+    async def decide(self, interaction: discord.Interaction, proposal_id: int, approve: bool, start: bool = False) -> None:
         if not self.is_owner_user(interaction.user):
             await interaction.response.send_message("Only the team owner can approve or reject moves.", ephemeral=True)
             return
@@ -303,7 +336,7 @@ class FFMBot(commands.Bot):
         rec = store.get_proposal(proposal_id)
         assert rec is not None
         await interaction.response.edit_message(embed=proposal_embed(rec, players, note="Re-checking and sending to Sleeper..."), view=None)
-        await self._execute_record(rec)
+        await self._execute_record(rec, start=start)
         rec = store.get_proposal(proposal_id)
         assert rec is not None
         try:
@@ -340,25 +373,74 @@ class FFMBot(commands.Bot):
         msg = rec.result.get("message") if rec.result else rec.status
         await interaction.followup.send(f"Proposal #{proposal_id}: {rec.status}. {msg}"[:1900], ephemeral=True)
 
-    async def _execute_record(self, rec: ProposalRecord) -> None:
-        """Preflight against fresh league data, then execute (or dry-run) and store the outcome."""
+    async def _execute_record(self, rec: ProposalRecord, start: bool = False) -> None:
+        """Preflight against fresh league data, then execute (or dry-run) and store the outcome.
+
+        With `start` and a start plan, the lineup change follows the add in the same step. After any successful
+        add without one, a computed lineup proposal is posted if the new player belongs in the lineup.
+        """
         store = self.app.store
+        p = rec.proposal
         try:
             ctx = await self.app.advisor.build_context()
             self._players = ctx.players
-            errors = ctx.validate_proposal(rec.proposal)
+            errors = ctx.validate_proposal(p)
             if errors:
-                store.set_status(
-                    rec.id, "failed", {"ok": False, "message": "No longer valid: " + "; ".join(errors)}
-                )
+                store.set_status(rec.id, "failed", {"ok": False, "message": "No longer valid: " + "; ".join(errors)})
                 return
             target = await self.app.advisor.exec_target()
-            result = await self.app.executor.execute(rec.proposal, target)
+            result = await self.app.executor.execute(p, target)
         except Exception as exc:  # noqa: BLE001
             log.exception("Execution of proposal %s crashed", rec.id)
             store.set_status(rec.id, "failed", {"ok": False, "message": f"{type(exc).__name__}: {exc}"})
             return
-        store.set_status(rec.id, "executed" if result.ok else "failed", result.to_dict())
+        if not result.ok or result.dry_run or not p.adds or p.kind == "waiver_claim":
+            store.set_status(rec.id, "executed" if result.ok else "failed", result.to_dict())
+            return
+
+        # The add landed. Now the lineup.
+        added = p.adds[0]
+        message = result.message
+        try:
+            fresh = await self.app.advisor.build_context()
+            self._players = fresh.players
+            if start and p.has_start_plan:
+                starters = fresh.lineup_with(added, p.start_slot or "", p.start_over)
+                lineup = Proposal(kind="lineup", starters=starters, rationale=f"Start {fresh.players.name(added)} at {p.start_slot}", horizon="this_week")
+                errs = fresh.validate_proposal(lineup)
+                if errs:
+                    message += " Lineup NOT changed: " + "; ".join(errs)
+                else:
+                    lres = await self.app.executor.execute(lineup, target)
+                    message += (" Started at " + str(p.start_slot) + ". " + lres.message) if lres.ok else (" Add done but the lineup change failed: " + lres.message)
+            else:
+                suggestion = fresh.suggested_start_after_add(added)
+                if suggestion:
+                    slot, over, gain = suggestion
+                    starters = fresh.lineup_with(added, slot, over)
+                    follow = Proposal(
+                        kind="lineup",
+                        starters=starters,
+                        rationale=(
+                            f"Follow-up to the add: by projection {fresh.players.name(added)} belongs at {slot}"
+                            + (f" over {fresh.players.name(over)}" if over else "")
+                            + f" ({gain:+.1f} projected). {fresh.players.name(added)} {fresh.game_note(added)}."
+                        ),
+                        confidence="medium",
+                        horizon="this_week",
+                        expected_gain=f"{gain:+.1f} projected pts this week",
+                        game_note=fresh.game_note(added),
+                    )
+                    if not fresh.validate_proposal(follow):
+                        frec = store.add_proposal(follow, rec.run_id)
+                        await self.post_proposal(await self.target_channel(), frec, fresh.players)
+                        message += f" He is not starting yet; a lineup proposal (#{frec.id}) is posted below."
+                else:
+                    message += " Bench add by projection; no lineup change suggested."
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Post-add lineup step failed for proposal %s", rec.id)
+            message += f" (lineup follow-up failed: {type(exc).__name__}: {exc})"
+        store.set_status(rec.id, "executed", {**result.to_dict(), "message": message})
 
     async def _refresh_proposal_message(self, rec: ProposalRecord, players: PlayerDB) -> None:
         if not rec.discord_channel_id or not rec.discord_message_id:

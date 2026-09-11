@@ -253,6 +253,86 @@ class LeagueContext:
         g = self.game_for(player_id)
         return bool(g and g.started)
 
+    def game_note(self, player_id: str) -> str:
+        """Human line about a player's game this week, flagged when it is today or already underway."""
+        from zoneinfo import ZoneInfo
+
+        g = self.game_for(player_id)
+        if g is None:
+            team = self.players.team(player_id)
+            return "no game this week (bye or free agent)" if team else "no team"
+        tz = ZoneInfo(self.config.timezone) if self.config.timezone else None
+        try:
+            dt = datetime.fromisoformat(g.kickoff.replace("Z", "+00:00"))
+            local = dt.astimezone(tz) if tz else dt
+            when = local.strftime("%a %b %d %I:%M %p %Z").replace(" 0", " ")
+            now = datetime.now(tz) if tz else datetime.now(timezone.utc)
+            today = local.date() == now.date()
+        except ValueError:
+            when, today = g.kickoff, False
+        team = self.players.team(player_id)
+        opp = g.away if team == g.home else g.home
+        vs = f"vs {opp}" if team == g.home else f"@ {opp}"
+        if g.state == "post":
+            return f"game FINISHED ({vs}); cannot be started this week"
+        if g.state == "in":
+            return f"game IN PROGRESS ({vs}); locked for this week"
+        return f"plays {when} {vs}" + (" (TODAY)" if today else "")
+
+    def lineup_with(self, player_id: str, slot: str, over: str | None) -> list[str]:
+        """Current starters with `player_id` placed in `slot` (replacing `over`, or the slot's current occupant)."""
+        starters = [str(s) for s in (self.my_roster.get("starters") or [])]
+        slots = self.starter_slots
+        idx = None
+        if over and over in starters and slots[starters.index(over)] == slot:
+            idx = starters.index(over)
+        else:
+            candidates = [i for i, s in enumerate(slots) if s == slot]
+            empty = [i for i in candidates if starters[i] == EMPTY_SLOT]
+            if empty:
+                idx = empty[0]
+            elif over and over in starters:
+                idx = starters.index(over)
+            elif candidates:
+                idx = min(candidates, key=lambda i: self.proj_pts(starters[i]) or 0.0)
+        if idx is None:
+            raise ValueError(f"no {slot} slot in this league")
+        out = list(starters)
+        out[idx] = str(player_id)
+        return out
+
+    def validate_start_plan(self, player_id: str, slot: str, over: str | None) -> list[str]:
+        errors: list[str] = []
+        if slot not in self.starter_slots:
+            return [f"{slot} is not a starting slot in this league ({', '.join(self.starter_slots)})"]
+        p = self.players.get(player_id) or {}
+        if not slot_allows(slot, p.get("position"), p.get("fantasy_positions")):
+            errors.append(f"{self.players.label(player_id)} is not eligible for the {slot} slot")
+        if over:
+            starters = [str(s) for s in (self.my_roster.get("starters") or [])]
+            if over not in starters:
+                errors.append(f"{self.players.name(over)} is not currently a starter")
+            elif self.starter_slots[starters.index(over)] != slot:
+                errors.append(f"{self.players.name(over)} starts at {self.starter_slots[starters.index(over)]}, not {slot}")
+            if self.game_started(over):
+                errors.append(f"{self.players.name(over)} cannot be benched: his game has started")
+        if self.game_started(player_id):
+            errors.append(f"{self.players.name(player_id)} cannot be started: his game has started")
+        return errors
+
+    def suggested_start_after_add(self, player_id: str) -> tuple[str, str | None, float] | None:
+        """If the optimizer would start a newly added player, return (slot, player he displaces, projected gain)."""
+        if self.game_started(player_id):
+            return None
+        current = [str(s) for s in (self.my_roster.get("starters") or [])]
+        optimal, total = self.optimal_starters()
+        if player_id not in optimal:
+            return None
+        slot = self.starter_slots[optimal.index(player_id)]
+        displaced = [s for s in current if s != EMPTY_SLOT and s not in optimal]
+        gain = total - team_distribution(self.lineup_pairs(current))[0]
+        return slot, (displaced[0] if displaced else None), round(gain, 1)
+
     async def _learn_waiver_cadence(self, public: SleeperPublic) -> str | None:
         """When did waiver claims actually process? Learned from this season so far, else last season."""
         from collections import Counter
@@ -840,6 +920,13 @@ class LeagueContext:
         if p.kind in ("add", "add_drop", "waiver_claim"):
             if not p.adds:
                 errors.append("adds is required")
+            if p.start_slot:
+                if len(p.adds) != 1:
+                    errors.append("a start plan needs exactly one added player")
+                else:
+                    errors.extend(self.validate_start_plan(p.adds[0], p.start_slot, p.start_over))
+                    if p.start_over and p.start_over in p.drops:
+                        pass  # benching the player you drop is implied
             for pid in p.adds:
                 if not self.is_free_agent(pid):
                     errors.append(f"{self.players.label(pid)} is not a free agent (owned by {self.owner_label(pid)})")
