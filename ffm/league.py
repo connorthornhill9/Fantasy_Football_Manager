@@ -97,6 +97,7 @@ class LeagueContext:
     injuries: dict[str, InjuryNote] = field(default_factory=dict)
     headlines: dict[str, list[NewsItem]] = field(default_factory=dict)
     games: dict[str, Game] = field(default_factory=dict)  # team abbreviation -> this week's game
+    played_ids: set[str] = field(default_factory=set)  # players with a game played this week (Sleeper stats feed)
     espn_proj: dict[str, float] = field(default_factory=dict)  # pid -> ESPN projection under league scoring
     locked: dict[str, str] = field(default_factory=dict)
     pending_claims: list[dict] = field(default_factory=list)  # my waiver claims awaiting the next run
@@ -145,7 +146,7 @@ class LeagueContext:
         try:
             (
                 rosters, users, players_raw, trending_add, trending_drop, projections, season_rows, matchups,
-                recent_raw, tx_raw, injury_notes, news_items, games, espn_rows,
+                recent_raw, tx_raw, injury_notes, news_items, games, espn_rows, sleeper_schedule, week_stats,
             ) = await asyncio.gather(
                 public.get_rosters(league_id),
                 public.get_league_users(league_id),
@@ -161,6 +162,8 @@ class LeagueContext:
                 espn.news() if espn else _empty(),
                 espn.scoreboard() if espn else _empty(),
                 espn.projections(season, week) if espn else _empty(),
+                public.get_schedule(season, week),
+                public.get_stats(season, week, positions),
             )
         finally:
             if espn:
@@ -221,6 +224,8 @@ class LeagueContext:
         ctx._ingest_season(season_rows)
         ctx._ingest_recent_stats(recent_raw)
         ctx._ingest_games(games)
+        ctx._ingest_sleeper_schedule(sleeper_schedule)
+        ctx.played_ids = {str(row.get("player_id")) for row in week_stats if (row.get("stats") or {}).get("gp")}
         ctx._compute_free_agents()
         ctx._ingest_news(injury_notes, news_items)
         ctx._ingest_espn_projections(espn_rows)
@@ -247,11 +252,37 @@ class LeagueContext:
         for pid, stats in matched.items():
             self.espn_proj[pid] = score_stats(stats, scoring) if scoring else 0.0
 
+    def _ingest_sleeper_schedule(self, schedule: list[dict]) -> None:
+        """Sleeper's schedule is the authority for game status (it is what enforces the locks); ESPN adds
+        kickoff time and weather when available."""
+        state_map = {"pre_game": "pre", "in_progress": "in", "complete": "post"}
+        for g in schedule:
+            home, away = str(g.get("home") or ""), str(g.get("away") or "")
+            if not home or not away:
+                continue
+            state = state_map.get(str(g.get("status") or ""), "pre")
+            existing = self.games.get(home) or self.games.get(away)
+            if existing is not None and {existing.home, existing.away} == {home, away}:
+                existing.state = state
+                if not existing.detail:
+                    existing.detail = str(g.get("status") or "")
+                continue
+            game = Game(
+                home=home, away=away, kickoff=f"{g.get('date', '')}T00:00Z" if g.get("date") else "",
+                state=state, detail=str(g.get("status") or ""), weather="", indoor=False, venue="",
+            )
+            self.games[home] = game
+            self.games[away] = game
+            self.team_opponents.setdefault(home, away)
+            self.team_opponents.setdefault(away, home)
+
     def game_for(self, player_id: str) -> Game | None:
         team = self.players.team(player_id)
         return self.games.get(team) if team else None
 
     def game_started(self, player_id: str) -> bool:
+        if str(player_id) in self.played_ids:
+            return True
         g = self.game_for(player_id)
         return bool(g and g.started)
 
@@ -261,15 +292,21 @@ class LeagueContext:
 
         g = self.game_for(player_id)
         if g is None:
+            if str(player_id) in self.played_ids:
+                return "already PLAYED this week; cannot be started"
             team = self.players.team(player_id)
             return "no game this week (bye or free agent)" if team else "no team"
         tz = ZoneInfo(self.config.timezone) if self.config.timezone else None
+        date_only = g.kickoff.endswith("T00:00Z")  # Sleeper's schedule has the date but not the time
         try:
             dt = datetime.fromisoformat(g.kickoff.replace("Z", "+00:00"))
-            local = dt.astimezone(tz) if tz else dt
-            when = local.strftime("%a %b %d %I:%M %p %Z").replace(" 0", " ")
-            now = datetime.now(tz) if tz else datetime.now(timezone.utc)
-            today = local.date() == now.date()
+            if date_only:
+                when, today = dt.strftime("%a %b %d (time unknown)"), dt.date() == (datetime.now(tz) if tz else datetime.now(timezone.utc)).date()
+            else:
+                local = dt.astimezone(tz) if tz else dt
+                when = local.strftime("%a %b %d %I:%M %p %Z").replace(" 0", " ")
+                now = datetime.now(tz) if tz else datetime.now(timezone.utc)
+                today = local.date() == now.date()
         except ValueError:
             when, today = g.kickoff, False
         team = self.players.team(player_id)
@@ -638,7 +675,7 @@ class LeagueContext:
             team = p.get("team")
             opp = (self.team_opponents.get(team) or "BYE") if team else "-"
         g = self.game_for(pid)
-        if g is not None and g.state == "post":
+        if (g is not None and g.state == "post") or (pid in self.played_ids and not (g is not None and g.state == "in")):
             opp = f"{opp} PLAYED"
         elif g is not None and g.state == "in":
             opp = f"{opp} LIVE"
@@ -795,7 +832,10 @@ class LeagueContext:
             seen.add(key)
             try:
                 dt = datetime.fromisoformat(g.kickoff.replace("Z", "+00:00"))
-                when = dt.astimezone(tz).strftime("%a %b %d %I:%M %p %Z") if tz else dt.strftime("%a %b %d %H:%M UTC")
+                if g.kickoff.endswith("T00:00Z"):
+                    when = dt.strftime("%a %b %d (kickoff time unavailable)")
+                else:
+                    when = dt.astimezone(tz).strftime("%a %b %d %I:%M %p %Z") if tz else dt.strftime("%a %b %d %H:%M UTC")
             except ValueError:
                 when = g.kickoff
             status = {"in": " (IN PROGRESS, players locked)", "post": " (FINAL, players locked)"}.get(g.state, "")

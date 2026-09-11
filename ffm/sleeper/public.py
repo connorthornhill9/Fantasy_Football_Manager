@@ -157,6 +157,17 @@ class SleeperPublic:
             return []
         return data if isinstance(data, list) else []
 
+    async def get_schedule(self, season: str, week: int, season_type: str = "regular") -> list[dict]:
+        """Sleeper's own NFL schedule for a week: home, away, date and status (pre_game / in_progress / complete)."""
+        try:
+            data = await self._get(f"/schedule/nfl/{season_type}/{season}")
+        except SleeperAPIError as exc:
+            log.warning("Sleeper schedule unavailable: %s", exc)
+            return []
+        if not isinstance(data, list):
+            return []
+        return [g for g in data if str(g.get("week")) == str(week)]
+
     async def get_season_projections(
         self, season: str, positions: list[str] | None = None, season_type: str = "regular"
     ) -> list[dict]:
